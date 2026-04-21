@@ -63,3 +63,22 @@ h2{font-size:1.4rem;font-weight:700;margin-bottom:20px;color:#1a1a1a}
 .summary-row{display:flex;justify-content:space-between;font-size:13px;padding:4px 0}
 @media(max-width:600px){.product-grid{grid-template-columns:1fr 1fr}.logo{font-size:1.1rem}}
 @media(max-width:420px){.product-grid{grid-template-columns:1fr}}
+
+/* === Estoque - Numeracao sem estoque === */
+.size-btn.out-of-stock {
+  background: #f0f0f0 !important;
+  color: #bbb !important;
+  border-color: #ddd !important;
+  cursor: not-allowed !important;
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+.size-btn.out-of-stock:hover {
+  background: #f0f0f0 !important;
+  color: #bbb !important;
+  border-color: #ddd !important;
+}
+.size-btn.out-of-stock.selected {
+  background: #f0f0f0 !important;
+  color: #bbb !important;
+}
