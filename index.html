@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Glamour Shoes Revendedores</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <div class="logo">Glamour<span style="color:#e91e8c">❤</span>Shoes <span class="logo-sub">Revendedores</span></div>
+    <nav>
+      <button class="nav-btn active" onclick="showView('catalog')">Catálogo</button>
+      <button class="nav-btn" onclick="showView('cart')">Carrinho <span id="cart-count" class="badge">0</span></button>
+      <button class="nav-btn admin-btn" onclick="showView('adminLogin')">Admin</button>
+    </nav>
+  </div>
+</header>
+<main>
+  <section id="view-catalog"></section>
+  <section id="view-cart" class="hidden"></section>
+  <section id="view-adminLogin" class="hidden">
+    <div class="login-wrap">
+      <div class="card login-card">
+        <div class="lock-icon">🔒</div>
+        <h2>Área Restrita</h2>
+        <p>Digite a senha para acessar o painel admin</p>
+        <input id="admin-pass" type="password" placeholder="••••••" class="pass-input" onkeydown="if(event.key==='Enter') checkPass()" />
+        <button class="btn-pink btn-full" onclick="checkPass()">Entrar</button>
+      </div>
+    </div>
+  </section>
+  <section id="view-admin" class="hidden">
+    <h2>Painel Admin</h2>
+    <div class="card" style="margin-bottom:28px">
+      <h3 class="pink">Configurar Apps Script (Pedidos)</h3>
+      <p style="font-size:13px;color:#888;margin-bottom:10px">Cole a URL do Apps Script para salvar pedidos automaticamente</p>
+      <input id="apps-script-url" type="text" placeholder="https://script.google.com/macros/s/..." class="input-full" />
+      <button class="btn-pink" style="margin-top:10px" onclick="saveScriptUrl()">Salvar URL</button>
+      <span id="script-saved" class="hidden" style="margin-left:10px;color:green">✓ Salvo!</span>
+    </div>
+    <div class="card">
+      <h3 class="pink">Produtos cadastrados</h3>
+      <p style="font-size:13px;color:#555">Gerencie seus produtos diretamente na planilha:</p>
+      <a href="https://docs.google.com/spreadsheets/d/175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU/edit" target="_blank" class="btn-gray" style="display:inline-block;margin-top:8px">→ Abrir Planilha</a>
+      <button class="btn-pink" style="margin-top:10px;margin-left:8px" onclick="loadProducts()">↻ Recarregar Produtos</button>
+    </div>
+  </section>
+  <section id="view-checkout" class="hidden"></section>
+</main>
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>
