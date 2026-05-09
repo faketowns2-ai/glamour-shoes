@@ -13,7 +13,7 @@ const SIZES = ["17","18","19","20","21","22","23","24","25","26","27","28","29",
 
 const TPLS = [
   {id:"promo",   icon:"🏷", label:"Promoção",    text:"Olá, {nome}! Temos promoção especial na Glamour❤️Shoes! Aproveite: {link}"},
-  {id:"novo",    icon:"✨", label:"Novidades",   text:"Oi, {nome}! Chegaram novidades na Glamour❤️Shoes! Confira: {link}"},
+  {id:"novo",    icon:"✨", label:"Novidades",   text:"Oi, {nome}! Chehgaram novidades na Glamour❤️Shoes! Confira: {link}"},
   {id:"retorno", icon:"💌", label:"Retorno",     text:"Oi, {nome}! Sentimos sua falta na Glamour❤️Shoes! Temos novidades: {link}"},
   {id:"confirm", icon:"✅", label:"Confirmação", text:"Olá, {nome}! Seu pedido na Glamour❤️Shoes foi confirmado! Obrigada pela preferência!"},
 ];
@@ -38,7 +38,11 @@ const lsSet  = (k,v) => { try{ localStorage.setItem(k,JSON.stringify(v)); }catch
 
 // normaliza data para YYYY-MM-DD
 function normDate(o){
-  if(o.date) return o.date;
+  if(o.date){
+    const _d=new Date(o.date);
+    if(/^\d{4}-\d{2}-\d{2}$/.test(o.date)) return o.date;
+    if(!isNaN(_d)) return _d.toISOString().slice(0,10);
+  }
   if(o.dateStr){
     const m=o.dateStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
     if(m) return `${m[3]}-${m[2]}-${m[1]}`;
@@ -932,9 +936,9 @@ function buildDash(){
   const maxV=Math.max(...days.map(d=>d.value),1);
 
   const dFromInp=ce("input",{type:"date",class:"inp",style:{width:"auto",padding:"5px 10px"}});
-  dFromInp.value=S.dFrom; dFromInp.addEventListener("change",e=>{S.dFrom=e.target.value;render();});
+  dFromInp.value=S.dFrom; dFromInp.addEventListener("change",e=>{S.dFrom=e.target.value;render();}); dFromInp.addEventListener("input",e=>{S.dFrom=e.target.value;render();});
   const dToInp=ce("input",{type:"date",class:"inp",style:{width:"auto",padding:"5px 10px"}});
-  dToInp.value=S.dTo; dToInp.addEventListener("change",e=>{S.dTo=e.target.value;render();});
+  dToInp.value=S.dTo; dToInp.addEventListener("change",e=>{S.dTo=e.target.value;render();}); dToInp.addEventListener("input",e=>{S.dTo=e.target.value;render();});
   const qr=`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(CATALOG_URL)}`;
 
   return ce("div",{},
