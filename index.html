@@ -51,7 +51,11 @@ const lsSet  = (k,v) => { try{ localStorage.setItem(k,JSON.stringify(v)); }catch
 
 // normaliza data para YYYY-MM-DD
 function normDate(o){
-  if(o.date) return o.date;
+  if(o.date){
+    const _d=new Date(o.date);
+    if(/^\d{4}-\d{2}-\d{2}$/.test(o.date)) return o.date;
+    if(!isNaN(_d)) return _d.toISOString().slice(0,10);
+  }
   if(o.dateStr){
     const m=o.dateStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
     if(m) return `${m[3]}-${m[2]}-${m[1]}`;
