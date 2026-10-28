@@ -17,7 +17,6 @@
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════════════
 const WA          = "5596991219866";
-const PASS        = "242526";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
@@ -115,7 +114,9 @@ const _savedUrl = lsGet("gs_script","") || lsGet("appsScriptUrl","") || _SCRIPT_
 
 const S={
   view:"catalog", adminTab:"orders", unlocked:false,
+  token:    lsGet("gs_token",""),
   products: normProds(lsGet("gs_prod",DEMO)),
+  afiliados: lsGet("gs_afi",[]),
   orders:   lsGet("gs_ord",[]),
   crm:      lsGet("gs_crm",[]),
   cart:[], sel:{},
@@ -182,9 +183,12 @@ async function loadFromSheets(force=false){
   }
   if(force){ S.syncing=true; render(); }
   try{
-    const res=await fetch(S.scriptUrl+"?action=load",{method:"GET"});
+    const res=await fetch(S.scriptUrl,{method:"POST",headers:{"Content-Type":"text/plain"},
+      body:JSON.stringify({action:"load",token:S.token||undefined})});
     const data=await res.json();
+    if(data.ok&&S.token&&!data.admin) logoutLocal("Sessão expirada. Entre de novo no Admin.");
     if(data.ok){
+      if(data.afiliados){ S.afiliados=data.afiliados; lsSet("gs_afi",S.afiliados); }
       if(force){
         if(data.products&&data.products.length>0){ S.products=normProds(data.products); lsSet("gs_prod",S.products); }
         if(data.orders  &&data.orders.length>0)  { S.orders=data.orders;     lsSet("gs_ord",S.orders);   }
@@ -198,8 +202,10 @@ async function loadFromSheets(force=false){
           if(novos.length){ S.orders=[...novos,...S.orders]; lsSet("gs_ord",S.orders); }
           S.orders.forEach(o=>{
             const r=data.orders.find(x=>String(x.id)===String(o.id));
-            if(r&&r.status!==o.status) o.status=r.status;
+            if(r&&r.pago&&!o.pago) Object.assign(o,r);
+            else if(r&&r.status!==o.status) o.status=r.status;
           });
+          lsSet("gs_ord",S.orders);
         }
         if(data.crm&&data.crm.length>0){
           data.crm.forEach(rc=>{
@@ -226,14 +232,26 @@ async function loadFromSheets(force=false){
   render(); return true;
 }
 
-async function _post(body){
-  if(!S.scriptUrl) return false;
+async function _call(body){
+  if(!S.scriptUrl) return {ok:false,error:"Sem conexão com a planilha."};
   try{
-    const res=await fetch(S.scriptUrl,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)});
+    const res=await fetch(S.scriptUrl,{method:"POST",headers:{"Content-Type":"text/plain"},
+      body:JSON.stringify({...body,token:S.token||undefined})});
     const d=JSON.parse(await res.text());
-    if(d.ok){ S.lastSync=nowStr(); lsSet("gs_lastsync",S.lastSync); return true; }
-    return false;
-  }catch(e){ return false; }
+    if(d.auth===false) logoutLocal("Sessão expirada. Entre de novo no Admin.");
+    return d;
+  }catch(e){ return {ok:false,error:"Sem conexão. Tente de novo."}; }
+}
+async function _post(body){
+  const d=await _call(body);
+  if(d.ok){ S.lastSync=nowStr(); lsSet("gs_lastsync",S.lastSync); return true; }
+  return false;
+}
+function logoutLocal(msg){
+  S.token=""; S.unlocked=false; lsSet("gs_token","");
+  S.orders=[]; S.crm=[]; S.afiliados=[];
+  ["gs_ord","gs_crm","gs_afi"].forEach(k=>{ try{localStorage.removeItem(k);}catch(e){} });
+  if(msg){ toast(msg,4000); if(String(S.view).startsWith("admin")) S.view="adminLogin"; render(); }
 }
 
 async function persistProducts(force=false){
@@ -323,7 +341,7 @@ function buildHeader(){
         const labels={catalog:"Catálogo",cart:"Carrinho",admin:"Admin"};
         const isOn=S.view===v||(v==="admin"&&S.view==="adminLogin");
         const btn=ce("button",{class:"nav-btn "+(isOn?"on":"off"),
-          onclick:()=>{ if(v==="admin") S.unlocked?go("admin"):go("adminLogin"); else go(v); }
+          onclick:()=>{ if(v==="admin") (S.unlocked||S.token)?(S.unlocked=true,go("admin")):go("adminLogin"); else go(v); }
         },labels[v]);
         if(v==="cart"&&cartCount>0) btn.appendChild(
           ce("span",{style:{position:"absolute",top:"-5px",right:"-5px",background:PINK,color:"#fff",
@@ -342,6 +360,7 @@ function buildView(){
     case "catalog":    return buildCatalog();
     case "cart":       return buildCart();
     case "checkout":   return buildCheckout();
+    case "paid":       return buildPaid();
     case "adminLogin": return buildLogin();
     case "admin":      return buildAdmin();
     default:           return buildCatalog();
@@ -557,28 +576,99 @@ function buildCheckout(){
           ce("span",{style:{fontWeight:600}},fmt(i.price*i.qty)))),
         ce("div",{style:{borderTop:"1px solid #ddd",marginTop:"8px",paddingTop:"8px",fontWeight:800,
           color:PINK,display:"flex",justifyContent:"space-between"}},ce("span",{},"Total"),ce("span",{},fmt(total)))),
-      ce("button",{class:"btn",style:{width:"100%",padding:"13px 0",fontSize:"15px",borderRadius:"30px",
-        background:"#25d366",color:"#fff",marginBottom:"10px"},onclick:doFinalize},"📲 Enviar Pedido no WhatsApp"),
+      VAREJO?ce("button",{class:"btn",disabled:!!S.busy,style:{width:"100%",padding:"14px 0",fontSize:"15px",borderRadius:"30px",
+        background:PINK,color:"#fff",marginBottom:"10px"},onclick:doPay},S.busy?"Gerando pagamento...":"💳 Pagar agora (Pix ou cartão)"):null,
+      ce("button",{class:"btn",disabled:!!S.busy,style:{width:"100%",padding:"13px 0",fontSize:"15px",borderRadius:"30px",
+        background:VAREJO?"#eee":"#25d366",color:VAREJO?"#1a1a2e":"#fff",marginBottom:"10px"},onclick:doFinalize},
+        VAREJO?"📲 Prefiro combinar no WhatsApp":"📲 Enviar Pedido no WhatsApp"),
       ce("button",{class:"btn",style:{width:"100%",padding:"11px 0",borderRadius:"30px",background:"#eee",color:"#1a1a2e"},
         onclick:()=>go("cart")},"Voltar")
     )
   );
 }
 
-function doFinalize(){
+function cartPayload(){
+  return {mode:VAREJO?"varejo":"atacado",client:S.cName.trim(),phone:S.cPhone.trim(),ref:getRef(),
+          items:S.cart.map(i=>({pid:i.pid,size:i.size,qty:i.qty}))};
+}
+async function doFinalize(){
   if(!S.cName.trim()) return toast("Informe o nome!");
   if(!S.cPhone.trim()) return toast("Informe o WhatsApp!");
-  const total=S.cart.reduce((s,i)=>s+i.price*i.qty,0);
-  const order={id:Date.now(),date:toDay(),dateStr:nowStr(),client:S.cName,phone:S.cPhone,
-               items:S.cart.map(i=>({...i})),total,status:"pending",origin:VAREJO?"varejo":"catalog"};
-  S.orders.unshift(order); crmUpsert(order);
+  if(S.busy) return; S.busy=true; render();
+  const d=await _call({action:"createOrder",...cartPayload()});
+  S.busy=false;
+  if(!d.ok&&d.error&&!/conexão/i.test(d.error)){ render(); return toast(d.error,4500); }
+  const total=d.ok?d.total:S.cart.reduce((s,i)=>s+i.price*i.qty,0);
   const lines=S.cart.map(i=>`• ${i.name} | Nº ${i.size} | Qtd: ${i.qty} | ${fmt(i.price*i.qty)}`).join("\n");
-  const msg=`*Pedido Glamour❤️Shoes${VAREJO?" (VAREJO)":" (ATACADO)"}*\n\nCliente: ${S.cName}\nWhatsApp: ${S.cPhone}\n\n${lines}\n\n*Total: ${fmt(total)}*`;
-  window.open(`https://wa.me/${WA}?text=${encodeURIComponent(msg)}`,"_blank");
-  persistOrders(); persistCRM();
+  const ref=getRef();
+  const msg=`*Pedido Glamour❤️Shoes${VAREJO?" (VAREJO)":" (ATACADO)"}*${d.ok?` #${d.id}`:""}\n\nCliente: ${S.cName}\nWhatsApp: ${S.cPhone}${ref?`\nIndicação: ${ref}`:""}\n\n${lines}\n\n*Total: ${fmt(total)}*`;
   S.cart=[]; S.cName=""; S.cPhone="";
   toast("Pedido enviado! Aguardando confirmação."); go("catalog");
+  location.href=`https://wa.me/${WA}?text=${encodeURIComponent(msg)}`;
 }
+
+async function doPay(){
+  if(!S.cName.trim()) return toast("Informe o nome!");
+  if(S.cPhone.replace(/\D/g,"").length<10) return toast("Informe o WhatsApp com DDD!");
+  if(S.busy) return; S.busy=true; render();
+  const d=await _call({action:"checkout",...cartPayload()});
+  if(!d.ok||!d.url){ S.busy=false; render(); return toast(d.error||"Não foi possível gerar o pagamento.",4500); }
+  lsSet("gs_lastorder",{id:d.id,total:d.total,client:S.cName,phone:S.cPhone,
+    items:S.cart.map(i=>({name:i.name,size:i.size,qty:i.qty,price:i.price}))});
+  location.href=d.url;
+}
+
+// ─── RETORNO DO PAGAMENTO ────────────────────────────────────────────────────
+async function checkPaymentReturn(){
+  const q=new URLSearchParams(location.search);
+  const nsu=q.get("order_nsu")||q.get("pedido");
+  if(!nsu||!q.get("transaction_nsu")) return;
+  S.view="paid"; S.payResult={state:"checking",id:nsu}; S.cart=[]; render();
+  const args={action:"confirm",order_nsu:nsu,transaction_nsu:q.get("transaction_nsu"),
+    slug:q.get("slug")||"",receipt_url:q.get("receipt_url")||"",capture_method:q.get("capture_method")||""};
+  try{ history.replaceState(null,"",location.pathname); }catch(e){}
+  let d={};
+  for(let t=0;t<4;t++){
+    d=await _call(args);
+    if(d.ok&&d.paid) break;
+    await new Promise(r=>setTimeout(r,3000));
+  }
+  S.payResult={state:d.ok&&d.paid?"paid":"pending",id:nsu,order:d.order||lsGet("gs_lastorder",null),receipt:args.receipt_url,args};
+  render();
+}
+function buildPaid(){
+  const r=S.payResult||{state:"checking"};
+  const o=r.order;
+  if(r.state==="checking") return ce("div",{class:"card",style:{maxWidth:"480px",margin:"40px auto",textAlign:"center",padding:"36px 24px"}},
+    ce("div",{class:"spin",style:{fontSize:"36px"}},"⏳"),ce("h2",{style:{margin:"12px 0 6px"}},"Confirmando pagamento..."),
+    ce("p",{style:{color:"#888",fontSize:"13px"}},"Isso leva só alguns segundos."));
+  const paid=r.state==="paid";
+  const lines=o&&o.items?o.items.map(i=>`• ${i.name} | Nº ${i.size} | Qtd: ${i.qty}`).join("\n"):"";
+  const msg=`*Pedido PAGO Glamour❤️Shoes* #${r.id}\n\n${o?`Cliente: ${o.client}\n\n${lines}\n\n*Total pago: ${fmt(o.total)}*`:""}${r.receipt?`\n\nComprovante: ${r.receipt}`:""}`;
+  return ce("div",{class:"card",style:{maxWidth:"480px",margin:"30px auto",textAlign:"center",padding:"30px 22px"}},
+    ce("div",{style:{fontSize:"44px"}},paid?"✅":"🕐"),
+    ce("h2",{style:{margin:"10px 0 6px"}},paid?"Pagamento aprovado!":"Pagamento em análise"),
+    ce("p",{style:{color:"#888",fontSize:"13px",marginBottom:"16px"}},
+      paid?`Pedido #${r.id} confirmado. Agora é só combinar a entrega com a gente no WhatsApp.`
+          :"Ainda não recebemos a confirmação. Se você já pagou, toque em Verificar de novo em alguns instantes."),
+    o&&o.items?ce("div",{style:{background:"#f7f0f5",borderRadius:"12px",padding:"12px 14px",fontSize:"13px",textAlign:"left",marginBottom:"16px"}},
+      ...o.items.map(i=>ce("div",{},`${i.name} | Nº ${i.size} x${i.qty}`)),
+      ce("div",{style:{fontWeight:800,color:PINK,marginTop:"6px"}},`Total: ${fmt(o.total)}`)):null,
+    paid?ce("a",{class:"btn",href:`https://wa.me/${WA}?text=${encodeURIComponent(msg)}`,
+      style:{width:"100%",padding:"13px 0",borderRadius:"30px",background:"#25d366",color:"#fff",textDecoration:"none",marginBottom:"10px"}},"📲 Combinar entrega no WhatsApp")
+      :ce("button",{class:"btn",style:{width:"100%",padding:"13px 0",borderRadius:"30px",background:PINK,color:"#fff",marginBottom:"10px"},
+        onclick:async()=>{S.payResult.state="checking";render();const d=await _call(r.args);
+          S.payResult={...r,state:d.ok&&d.paid?"paid":"pending",order:d.order||r.order};render();}},"🔄 Verificar de novo"),
+    ce("button",{class:"btn",style:{width:"100%",padding:"11px 0",borderRadius:"30px",background:"#eee",color:"#1a1a2e"},
+      onclick:()=>go("catalog")},"Voltar ao catálogo"));
+}
+
+// ─── AFILIADOS: link com ?ref=codigo vale por 30 dias neste aparelho ─────────
+function captureRef(){
+  const r=new URLSearchParams(location.search).get("ref");
+  if(r){ const c=r.toLowerCase().replace(/[^a-z0-9_-]/g,"").slice(0,30); if(c) lsSet("gs_ref",{c,exp:Date.now()+30*864e5}); }
+}
+function getRef(){ const r=lsGet("gs_ref",null); return r&&r.exp>Date.now()?r.c:""; }
 
 function crmUpsert(order){
   const ex=S.crm.find(c=>c.phone===order.phone);
@@ -605,7 +695,13 @@ function buildLogin(){
     )
   );
 }
-function tryLogin(p){ if(p===PASS){S.unlocked=true;go("admin");}else toast("Senha incorreta!"); }
+async function tryLogin(p){
+  if(!p) return toast("Digite a senha!");
+  const d=await _call({action:"login",pass:p});
+  if(!d.ok) return toast(d.error||"Senha incorreta!");
+  S.token=d.token; lsSet("gs_token",d.token); S.unlocked=true;
+  go("admin"); loadFromSheets(true);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ADMIN
@@ -613,7 +709,7 @@ function tryLogin(p){ if(p===PASS){S.unlocked=true;go("admin");}else toast("Senh
 function buildAdmin(){
   const pending=S.orders.filter(o=>o.status==="pending");
   const TABS=[["orders","📋 Pedidos"],["manual","🧾 Manual"],["crm","👥 CRM"],
-              ["dash","📊 Dashboard"],["stock","📦 Estoque"],["prods","🛍 Produtos"],["cfg","⚙️ Config"]];
+              ["dash","📊 Dashboard"],["stock","📦 Estoque"],["prods","🛍 Produtos"],["afi","🤝 Afiliados"],["cfg","⚙️ Config"]];
   return ce("div",{},
     !S.scriptUrl?ce("div",{style:{background:"#fff3cd",borderRadius:"12px",padding:"10px 16px",
       marginBottom:"14px",borderLeft:"4px solid #ffc107",fontSize:"13px",color:"#856404"}},
@@ -634,6 +730,7 @@ function buildAdmin(){
     S.adminTab==="dash"  ?buildDash()  :
     S.adminTab==="stock" ?buildStock() :
     S.adminTab==="prods" ?buildProds() :
+    S.adminTab==="afi"   ?buildAfiliados() :
     buildConfig()
   );
 }
@@ -655,12 +752,20 @@ function buildOrders(){
               o.origin==="manual"?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#e3f2fd",
                 color:"#1565c0",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"Loja"):null,
               o.origin==="varejo"?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#fff3e0",
-                color:"#e65100",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"Varejo"):null),
+                color:"#e65100",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"Varejo"):null,
+              o.pago?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#e8f5e9",
+                color:"#2e7d32",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"💳 Pago"):
+              (o.pagamento&&o.pagamento.link&&o.status==="pending")?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#f3e5f5",
+                color:"#6a1b9a",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"Aguardando pagamento"):null,
+              o.ref?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#e0f2f1",
+                color:"#00695c",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},`🤝 ${o.ref}`):null),
             ce("div",{style:{fontSize:"12px",color:"#aaa",marginBottom:"6px"}},o.dateStr),
             isEditing?buildOrderEditor(o):ce("div",{},
               ...o.items.map(i=>ce("div",{style:{fontSize:"13px",color:"#555",marginBottom:"2px"}},
                 `• ${i.name} | Nº ${i.size} | Qtd: ${i.qty} | ${fmt(i.price*i.qty)}`)),
-              ce("div",{style:{fontWeight:800,color:PINK,marginTop:"6px"}},`Total: ${fmt(o.total)}`)
+              ce("div",{style:{fontWeight:800,color:PINK,marginTop:"6px"}},`Total: ${fmt(o.total)}`),
+              o.pago&&o.pagamento&&o.pagamento.receipt_url?ce("a",{href:o.pagamento.receipt_url,target:"_blank",
+                style:{fontSize:"12px",color:"#1565c0"}},`Ver comprovante (${o.pagamento.metodo||"pagamento"})`):null
             )
           ),
           ce("div",{style:{display:"flex",flexDirection:"column",gap:"6px",alignItems:"flex-end"}},
@@ -772,6 +877,7 @@ async function confirmOrder(id){
     if(p&&p.stock[item.size]!==undefined) p.stock[item.size]=Math.max(0,(p.stock[item.size]||0)-item.qty);
   });
   o.status="confirmed";
+  if(o.ref&&!o.comissao){ const a=S.afiliados.find(x=>x.codigo===o.ref); if(a) o.comissao=Math.round(o.total*(+a.comissao||0))/100; }
   const c=S.crm.find(x=>x.phone===o.phone);
   if(c){c.orders=(c.orders||0)+1;c.pending=Math.max(0,(c.pending||1)-1);c.lastOrder=o.date;}
   lsSet("gs_prod",S.products); lsSet("gs_ord",S.orders); lsSet("gs_crm",S.crm);
@@ -1260,6 +1366,92 @@ function buildProds(){
   );
 }
 
+// ─── AFILIADOS ───────────────────────────────────────────────────────────────
+function afiStats(a){
+  const ords=S.orders.filter(o=>o.ref===a.codigo&&o.status!=="cancelled");
+  const conf=ords.filter(o=>o.status==="confirmed");
+  const com=o=>+o.comissao||Math.round(o.total*(+a.comissao||0))/100;
+  const aPagar=conf.filter(o=>!o.comissaoPaga);
+  return {pedidos:ords.length,vendas:conf.length,faturado:conf.reduce((s,o)=>s+o.total,0),
+          comissaoTotal:conf.reduce((s,o)=>s+com(o),0),aPagar:aPagar.reduce((s,o)=>s+com(o),0),aPagarOrds:aPagar};
+}
+async function saveAfiliados(msg){
+  lsSet("gs_afi",S.afiliados);
+  const ok=await _post({action:"saveAfiliados",afiliados:S.afiliados});
+  toast(ok?(msg||"✅ Afiliados salvos!"):"⚠️ Erro ao salvar na planilha.",ok?3000:4500); render();
+}
+function slugAfi(nome){
+  const base=nome.normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"").slice(0,16)||"afiliado";
+  let c=base,n=2; while(S.afiliados.some(a=>a.codigo===c)) c=base+(n++);
+  return c;
+}
+function buildAfiliados(){
+  if(!S.afiForm) S.afiForm={nome:"",whatsapp:"",pix:"",comissao:"10"};
+  const f=S.afiForm;
+  const inp=(id,label,key,ph,type="text")=>{
+    const i=ce("input",{type,class:"inp",id,placeholder:ph}); i.value=f[key];
+    i.addEventListener("input",e=>S.afiForm[key]=e.target.value);
+    return ce("div",{},ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",marginBottom:"4px"}},label),i);
+  };
+  const tot=S.afiliados.reduce((acc,a)=>{const t=afiStats(a);acc.v+=t.vendas;acc.f+=t.faturado;acc.p+=t.aPagar;return acc;},{v:0,f:0,p:0});
+  return ce("div",{},
+    ce("h3",{style:{marginBottom:"14px",fontSize:"17px"}},"🤝 Afiliados"),
+    ce("div",{class:"kpi-grid",style:{marginBottom:"16px"}},
+      mkKPI("🤝","Afiliados ativos",S.afiliados.filter(a=>a.ativo).length,"#e0f2f1","#00695c"),
+      mkKPI("🛍","Vendas confirmadas",tot.v,"#e8f5e9","#2e7d32"),
+      mkKPI("💰","Faturado",fmt(tot.f),"#fce4ec","#ad1457"),
+      mkKPI("⏳","Comissão a pagar",fmt(tot.p),"#fff3e0","#e65100")),
+    ce("div",{class:"card"},
+      ce("div",{style:{fontWeight:700,fontSize:"14px",marginBottom:"10px"}},"Novo afiliado"),
+      ce("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:"10px"}},
+        inp("afi-nome","Nome","nome","Ex: Ana Paula"),
+        inp("afi-wa","WhatsApp","whatsapp","96 99999-9999"),
+        inp("afi-pix","Chave Pix","pix","CPF, e-mail ou telefone"),
+        inp("afi-com","Comissão (%)","comissao","10","number")),
+      ce("button",{class:"btn",style:{marginTop:"12px",background:PINK,color:"#fff"},onclick:()=>{
+        if(!f.nome.trim()) return toast("Informe o nome do afiliado!");
+        const pct=+f.comissao; if(!(pct>0&&pct<=50)) return toast("Comissão entre 1% e 50%.");
+        S.afiliados.push({codigo:slugAfi(f.nome),nome:f.nome.trim(),whatsapp:f.whatsapp.trim(),pix:f.pix.trim(),comissao:pct,ativo:true,criado:toDay()});
+        S.afiForm=null; saveAfiliados("✅ Afiliado cadastrado!");
+      }},"Cadastrar afiliado")),
+    S.afiliados.length===0?ce("div",{style:{color:"#aaa",textAlign:"center",padding:"30px 0"}},"Nenhum afiliado cadastrado ainda."):null,
+    ...S.afiliados.map(a=>{
+      const t=afiStats(a);
+      const link=`${CATALOG_URL}/varejo?ref=${a.codigo}`;
+      return ce("div",{class:"card",style:{opacity:a.ativo?1:.6}},
+        ce("div",{style:{display:"flex",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",alignItems:"flex-start"}},
+          ce("div",{style:{minWidth:0,flex:"1 1 240px"}},
+            ce("div",{style:{fontWeight:700,fontSize:"14px"}},a.nome,
+              ce("span",{style:{marginLeft:"8px",fontSize:"11px",color:"#888",fontWeight:400}},`${a.comissao}% • código ${a.codigo}`),
+              a.ativo?null:ce("span",{style:{marginLeft:"6px",fontSize:"10px",background:"#555",color:"#fff",borderRadius:"10px",padding:"2px 8px"}},"INATIVO")),
+            ce("div",{style:{fontSize:"12px",color:"#888",marginTop:"2px"}},`${a.whatsapp||"sem WhatsApp"} • Pix: ${a.pix||"não informado"}`),
+            ce("div",{style:{fontSize:"12px",marginTop:"8px",wordBreak:"break-all",color:"#1565c0"}},link)),
+          ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap"}},
+            ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:"#e3f2fd",color:"#1565c0"},onclick:async()=>{
+              try{ await navigator.clipboard.writeText(link); toast("🔗 Link copiado!"); }catch(e){ prompt("Copie o link:",link); }
+            }},"Copiar link"),
+            ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:"#f0f0f0",color:"#1a1a2e"},onclick:()=>{
+              const v=prompt(`Nova comissão de ${a.nome} (%)`,a.comissao); if(v===null) return;
+              const n=+String(v).replace(",","."); if(!(n>0&&n<=50)) return toast("Comissão entre 1% e 50%.");
+              a.comissao=n; saveAfiliados("✅ Comissão atualizada!");
+            }},"Alterar %"),
+            ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:a.ativo?"#eceff1":"#e8f5e9",color:a.ativo?"#37474f":"#2e7d32"},
+              onclick:()=>{a.ativo=!a.ativo;saveAfiliados(a.ativo?"✅ Afiliado reativado!":"Afiliado desativado.");}},a.ativo?"Desativar":"Reativar"))),
+        ce("div",{style:{display:"flex",gap:"16px",flexWrap:"wrap",fontSize:"12px",marginTop:"10px",paddingTop:"10px",borderTop:"1px solid #eee"}},
+          ce("span",{},`Pedidos: `,ce("b",{},t.pedidos)),
+          ce("span",{},`Vendas confirmadas: `,ce("b",{},t.vendas)),
+          ce("span",{},`Faturado: `,ce("b",{},fmt(t.faturado))),
+          ce("span",{},`Comissão total: `,ce("b",{},fmt(t.comissaoTotal))),
+          ce("span",{style:{color:t.aPagar>0?"#e65100":"#2e7d32"}},`A pagar: `,ce("b",{},fmt(t.aPagar)))),
+        t.aPagar>0?ce("button",{class:"btn",style:{marginTop:"10px",padding:"7px 16px",fontSize:"12px",background:"#4caf50",color:"#fff"},
+          onclick:async()=>{
+            if(!confirm(`Confirma que pagou ${fmt(t.aPagar)} de comissão para ${a.nome}?`)) return;
+            t.aPagarOrds.forEach(o=>{ if(!o.comissao) o.comissao=Math.round(o.total*(+a.comissao||0))/100; o.comissaoPaga=true; });
+            const ok=await persistOrders(true); if(ok) toast("✅ Comissão marcada como paga!");
+          }},`✅ Marcar ${fmt(t.aPagar)} como pago`):null);
+    }));
+}
+
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 function buildConfig(){
   const scriptInp=ce("input",{type:"text",class:"inp",placeholder:"https://script.google.com/macros/s/...",
@@ -1288,6 +1480,21 @@ function buildConfig(){
         `✅ Conectado${S.lastSync?" • Última sync: "+S.lastSync:""}`):null,
       S.syncError?ce("div",{style:{marginTop:"6px",fontSize:"12px",color:"#e53935"}},`❌ ${S.syncError}`):null
     ),
+    (()=>{
+      const np=ce("input",{type:"password",class:"inp",id:"cfg-newpass",placeholder:"Nova senha (mínimo 6 caracteres)",style:{marginBottom:"10px"}});
+      return ce("div",{class:"card"},
+        ce("div",{style:{fontWeight:700,fontSize:"14px",color:PINK,marginBottom:"8px"}},"Senha do Admin"),
+        ce("p",{style:{fontSize:"13px",color:"#888",marginBottom:"10px"}},"A senha fica guardada no Google, fora do site."),
+        np,
+        ce("div",{style:{display:"flex",gap:"10px",flexWrap:"wrap"}},
+          ce("button",{class:"btn",style:{background:PINK,color:"#fff"},onclick:async()=>{
+            const d=await _call({action:"changePass",newPass:np.value});
+            toast(d.ok?"✅ Senha alterada!":(d.error||"Erro ao trocar a senha"),4000); if(d.ok) np.value="";
+          }},"Trocar senha"),
+          ce("button",{class:"btn",style:{background:"#eee",color:"#1a1a2e"},onclick:async()=>{
+            await _call({action:"logout"}); logoutLocal(""); go("catalog"); toast("Você saiu do Admin.");
+          }},"Sair do Admin")));
+    })(),
     ce("div",{class:"card"},
       ce("div",{style:{fontWeight:700,fontSize:"14px",color:PINK,marginBottom:"8px"}},"Planilha de Produtos"),
       ce("p",{style:{fontSize:"13px",color:"#888",marginBottom:"10px"}},"Acesse a planilha para ver ou editar dados diretamente."),
@@ -1311,8 +1518,11 @@ function buildConfig(){
 // ═══════════════════════════════════════════════════════════════════════════
 // INICIALIZAÇÃO
 // ═══════════════════════════════════════════════════════════════════════════
+captureRef();
+if(!S.token) logoutLocal("");   // visitante não guarda pedidos nem clientes no aparelho
 render();
 
+checkPaymentReturn();
 if(S.scriptUrl) loadFromSheets(false);
 
 // Sync automático a cada 30 minutos (silencioso)
