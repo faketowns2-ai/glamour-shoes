@@ -19,6 +19,9 @@ const PASS        = "242526";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
+// Link /varejo mostra o preço de varejo (coluna "varejo" da planilha), sem Admin
+const VAREJO      = /^\/varejo/i.test(location.pathname);
+const priceOf     = p => VAREJO ? (+p.varejo||0) : (+p.price||0);
 const _SCRIPT_DEFAULT = "https://script.google.com/macros/s/AKfycbw1Pdwu6HC8RzYZplOuhZtYw4kbVcLJPWG35DMElEKiLg4ckebqvRcUHfZMUh_zZu3k/exec";
 
 const SIZES = ["17","18","19","20","21","22","23","24","25","26","27","28","29",
@@ -125,17 +128,24 @@ const S={
 // ─── OCULTAR PRODUTOS ────────────────────────────────────────────────────────
 // A planilha tem colunas fixas, então o status "oculto" é gravado dentro do
 // JSON da coluna stock (chave "_oculto"). Ao carregar, ele vira p.hidden.
+// O preço de varejo vem da coluna "varejo" da planilha e também é guardado como
+// "_varejo" no JSON de estoque (funciona mesmo antes da coluna existir).
 function normProd(p){
-  if(p&&p.stock&&Object.prototype.hasOwnProperty.call(p.stock,"_oculto")){
-    const st={...p.stock}; p.hidden=!!st._oculto; delete st._oculto; p.stock=st;
-  }
+  if(!p||!p.stock) return p;
+  const st={...p.stock};
+  if("_oculto" in st){ p.hidden=!!st._oculto; delete st._oculto; }
+  if("_varejo" in st){ const v=+st._varejo||0; delete st._varejo; if(!(+p.varejo>0)) p.varejo=v; }
+  p.stock=st;
   return p;
 }
 function normProds(arr){ return (arr||[]).map(normProd); }
 function prodsForSheet(){
   return S.products.map(p=>{
     const {hidden,...rest}=p;
-    return hidden?{...rest,stock:{...(p.stock||{}),_oculto:1}}:rest;
+    const st={...(p.stock||{})};
+    if(hidden) st._oculto=1;
+    if(+p.varejo>0) st._varejo=+p.varejo;
+    return {...rest,stock:st};
   });
 }
 function totalStock(p){ return Object.values(p.stock||{}).reduce((a,b)=>a+(+b||0),0); }
@@ -149,7 +159,7 @@ async function setHidden(ids,val){
 }
 
 function blankForm(){
-  return {id:null,code:"",gender:"Feminino",name:"",desc:"",price:"",cost:"",image:"",featured:false,stock:{}};
+  return {id:null,code:"",gender:"Feminino",name:"",desc:"",price:"",cost:"",varejo:"",image:"",featured:false,stock:{}};
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -262,12 +272,12 @@ function buildHeader(){
   return ce("header",{},
     ce("div",{style:{fontWeight:900,fontSize:"19px",color:"#fff"}},
       "Glamour❤️Shoes ",
-      ce("span",{style:{fontSize:"12px",fontWeight:400,color:"#ccc"}},"Revendedores"),
+      ce("span",{style:{fontSize:"12px",fontWeight:400,color:"#ccc"}},VAREJO?"Loja":"Revendedores"),
       S.syncing?ce("span",{class:"spin",style:{fontSize:"14px",marginLeft:"10px"}},"🔄"):null,
       S.lastSync&&!S.syncing?ce("span",{style:{fontSize:"10px",color:"#aaa",marginLeft:"10px"}},`sync ${S.lastSync}`):null
     ),
     ce("div",{style:{display:"flex",gap:"7px"}},
-      ["catalog","cart","admin"].map(v=>{
+      (VAREJO?["catalog","cart"]:["catalog","cart","admin"]).map(v=>{
         const labels={catalog:"Catálogo",cart:"Carrinho",admin:"Admin"};
         const isOn=S.view===v||(v==="admin"&&S.view==="adminLogin");
         const btn=ce("button",{class:"nav-btn "+(isOn?"on":"off"),
@@ -367,16 +377,16 @@ function buildCatalog(){
 }
 
 function getFilteredProds(){
-  let p=S.products.filter(x=>!x.hidden);
+  let p=S.products.filter(x=>!x.hidden&&priceOf(x)>0);
   if(S.fGender) p=p.filter(x=>x.gender===S.fGender);
   if(S.fSize)   p=p.filter(x=>(x.stock[S.fSize]||0)>0);
   if(S.fText)   p=p.filter(x=>x.name.toLowerCase().includes(S.fText.toLowerCase()));
-  if(S.fPrice==="0-150")    p=p.filter(x=>x.price<150);
-  if(S.fPrice==="150-250")  p=p.filter(x=>x.price>=150&&x.price<250);
-  if(S.fPrice==="250+")     p=p.filter(x=>x.price>=250);
+  if(S.fPrice==="0-150")    p=p.filter(x=>priceOf(x)<150);
+  if(S.fPrice==="150-250")  p=p.filter(x=>priceOf(x)>=150&&priceOf(x)<250);
+  if(S.fPrice==="250+")     p=p.filter(x=>priceOf(x)>=250);
   if(S.fSort==="az")        p.sort((a,b)=>a.name.localeCompare(b.name));
-  if(S.fSort==="price_asc") p.sort((a,b)=>a.price-b.price);
-  if(S.fSort==="price_desc")p.sort((a,b)=>b.price-a.price);
+  if(S.fSort==="price_asc") p.sort((a,b)=>priceOf(a)-priceOf(b));
+  if(S.fSort==="price_desc")p.sort((a,b)=>priceOf(b)-priceOf(a));
   if(S.fSort==="featured")  p.sort((a,b)=>(b.featured?1:0)-(a.featured?1:0));
   return p;
 }
@@ -407,7 +417,7 @@ function buildProductCard(p){
       ),
       ce("div",{style:{fontWeight:700,fontSize:"14px",marginBottom:"3px"}},p.name),
       ce("div",{style:{fontSize:"12px",color:"#777",marginBottom:"8px"}},p.desc),
-      ce("div",{style:{fontWeight:800,color:PINK,fontSize:"17px",marginBottom:"10px"}},fmt(p.price)),
+      ce("div",{style:{fontWeight:800,color:PINK,fontSize:"17px",marginBottom:"10px"}},fmt(priceOf(p))),
       ce("div",{style:{fontSize:"12px",fontWeight:600,color:"#555",marginBottom:"5px"}},"Numeração:"),
       ce("div",{style:{display:"flex",flexWrap:"wrap",gap:"5px",marginBottom:"10px"}},
         ...allSizes.map(s=>{
@@ -445,7 +455,7 @@ function addToCart(p,size,qty){
   const nq=(ex?ex.qty:0)+qty;
   if(nq>av) return toast("Quantidade maior que o estoque!");
   if(ex) ex.qty=nq;
-  else S.cart.push({key,pid:p.id,name:p.name,code:p.code,image:p.image,size,qty,price:p.price,cost:p.cost});
+  else S.cart.push({key,pid:p.id,name:p.name,code:p.code,image:p.image,size,qty,price:priceOf(p),cost:p.cost});
   S.sel[p.id]={size:"",qty:1};
   toast("Adicionado ao carrinho!"); render();
 }
@@ -518,10 +528,10 @@ function doFinalize(){
   if(!S.cPhone.trim()) return toast("Informe o WhatsApp!");
   const total=S.cart.reduce((s,i)=>s+i.price*i.qty,0);
   const order={id:Date.now(),date:toDay(),dateStr:nowStr(),client:S.cName,phone:S.cPhone,
-               items:S.cart.map(i=>({...i})),total,status:"pending",origin:"catalog"};
+               items:S.cart.map(i=>({...i})),total,status:"pending",origin:VAREJO?"varejo":"catalog"};
   S.orders.unshift(order); crmUpsert(order);
   const lines=S.cart.map(i=>`• ${i.name} | Nº ${i.size} | Qtd: ${i.qty} | ${fmt(i.price*i.qty)}`).join("\n");
-  const msg=`*Pedido Glamour❤️Shoes*\n\nCliente: ${S.cName}\nWhatsApp: ${S.cPhone}\n\n${lines}\n\n*Total: ${fmt(total)}*`;
+  const msg=`*Pedido Glamour❤️Shoes${VAREJO?" (VAREJO)":" (ATACADO)"}*\n\nCliente: ${S.cName}\nWhatsApp: ${S.cPhone}\n\n${lines}\n\n*Total: ${fmt(total)}*`;
   window.open(`https://wa.me/${WA}?text=${encodeURIComponent(msg)}`,"_blank");
   persistOrders(); persistCRM();
   S.cart=[]; S.cName=""; S.cPhone="";
@@ -601,7 +611,9 @@ function buildOrders(){
               o.client," ",
               ce("span",{style:{fontSize:"12px",color:"#888",fontWeight:400}},`• ${o.phone}`),
               o.origin==="manual"?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#e3f2fd",
-                color:"#1565c0",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"Loja"):null),
+                color:"#1565c0",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"Loja"):null,
+              o.origin==="varejo"?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#fff3e0",
+                color:"#e65100",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"Varejo"):null),
             ce("div",{style:{fontSize:"12px",color:"#aaa",marginBottom:"6px"}},o.dateStr),
             isEditing?buildOrderEditor(o):ce("div",{},
               ...o.items.map(i=>ce("div",{style:{fontSize:"13px",color:"#555",marginBottom:"2px"}},
@@ -1122,8 +1134,9 @@ function buildProds(){
       ce("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}},
         mkInp("Código","code","text","GS-001"),
         mkInp("Nome","name","text","Ex: Sandália X"),
-        mkInp("Preço de Venda (R$)","price","number","299.90"),
+        mkInp("Preço Atacado (R$)","price","number","299.90"),
         mkInp("Preço de Custo (R$)","cost","number","150.00"),
+        mkInp("Preço Varejo (R$)","varejo","number","Ex: 159.90"),
         mkInp("URL da Foto","image","text","https://...",true),
         mkInp("Descrição","desc","text","Breve descrição",true)),
       ce("div",{style:{marginTop:"12px",display:"flex",gap:"16px",flexWrap:"wrap",alignItems:"center"}},
@@ -1162,10 +1175,10 @@ function buildProds(){
       ce("div",{style:{display:"flex",gap:"10px",marginTop:"16px"}},
         ce("button",{class:"btn",style:{flex:1,padding:"11px 0",borderRadius:"30px",background:PINK,color:"#fff"},
           onclick:async()=>{
-            const{id,code,gender,name,desc,price,cost,image,featured,stock}=S.pForm;
+            const{id,code,gender,name,desc,price,cost,varejo,image,featured,stock}=S.pForm;
             if(!name||!price||!cost) return toast("Nome, preço e custo são obrigatórios!");
             if(!Object.keys(stock).length) return toast("Selecione ao menos um número!");
-            const prod={code,gender,name,desc,price:+price,cost:+cost,image,featured,stock};
+            const prod={code,gender,name,desc,price:+price,cost:+cost,varejo:+varejo||0,image,featured,stock};
             if(id) S.products=S.products.map(p=>p.id===id?{...p,...prod}:p);
             else   S.products.push({id:Date.now(),...prod});
             S.pForm=blankForm(); render();
@@ -1193,10 +1206,10 @@ function buildProds(){
           p.hidden?ce("span",{style:{marginLeft:"6px",fontSize:"10px",background:"#555",color:"#fff",borderRadius:"10px",padding:"2px 8px"}},"OCULTO"):null,
           totalStock(p)<=0?ce("span",{style:{marginLeft:"6px",fontSize:"10px",background:"#ffeef0",color:"#e53935",borderRadius:"10px",padding:"2px 8px"}},"ESGOTADO"):null),
         ce("div",{style:{fontSize:"11px",color:"#888"}},
-          `${p.gender}${p.code?" • "+p.code:""} • Venda: ${fmt(p.price)} • Custo: ${fmt(p.cost)} • Margem: `,
+          `${p.gender}${p.code?" • "+p.code:""} • Atacado: ${fmt(p.price)} • Varejo: ${p.varejo?fmt(p.varejo):"sem preço"} • Custo: ${fmt(p.cost)} • Margem: `,
           ce("span",{style:{color:"#2e7d32",fontWeight:700}},`${p.price>0?((1-p.cost/p.price)*100).toFixed(0):0}%`))),
       ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",borderRadius:"20px",background:"#f0f0f0",color:"#1a1a2e"},
-        onclick:()=>{S.pForm={...p,price:String(p.price),cost:String(p.cost),stock:{...p.stock}};render();}},"Editar"),
+        onclick:()=>{S.pForm={...p,price:String(p.price),cost:String(p.cost),varejo:p.varejo?String(p.varejo):"",stock:{...p.stock}};render();}},"Editar"),
       ce("button",{style:{padding:"5px 12px",fontSize:"12px",borderRadius:"20px",background:p.hidden?"#e8f5e9":"#eceff1",color:p.hidden?"#2e7d32":"#37474f",border:"none",fontWeight:700,cursor:"pointer"},
         onclick:()=>setHidden([p.id],!p.hidden)},p.hidden?"👁 Mostrar":"🙈 Ocultar"),
       ce("button",{style:{padding:"5px 12px",fontSize:"12px",borderRadius:"20px",background:"#ffeef0",color:"#e53935",border:"none",fontWeight:700,cursor:"pointer"},
