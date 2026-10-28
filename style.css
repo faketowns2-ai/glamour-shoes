@@ -80,3 +80,34 @@ header{background:#1a1a2e;padding:13px 18px;display:flex;align-items:center;just
 @media(max-width:380px){
   .grid{grid-template-columns:1fr}
 }
+
+/* ══ BLACK FRIDAY (ativo quando o app tem a classe .bf) ══ */
+.bf{--bf-gold:#f5c542;--bf-ink:#0b0b0e;--bf-panel:#16161b;background:var(--bf-ink);color:#f4f1ea;min-height:100vh;
+  background-image:radial-gradient(circle at 15% 0%,rgba(233,30,140,.18),transparent 40%),radial-gradient(circle at 90% 20%,rgba(245,197,66,.10),transparent 35%)}
+.bf header{background:#000;border-bottom:2px solid var(--bf-gold)}
+.bf .nav-btn.on{background:var(--bf-gold);color:#000}
+.bf .card,.bf .product-card{color:#1a1a2e}
+.bf .product-card{box-shadow:0 0 0 1px rgba(245,197,66,.35),0 6px 22px rgba(0,0,0,.5)}
+.bf .product-card:hover{box-shadow:0 0 0 2px var(--bf-gold),0 10px 28px rgba(233,30,140,.35)}
+.bf .main h2,.bf .main > div > h3{color:#fff}
+
+.bf-bar{background:linear-gradient(90deg,#000 0%,#1a0010 50%,#000 100%);border-bottom:1px solid rgba(245,197,66,.4);overflow:hidden}
+.bf-inner{max-width:980px;margin:0 auto;padding:16px 14px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.bf-kicker{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--bf-gold);font-weight:700;margin-bottom:2px}
+.bf-word{font-family:'Anton','Impact','Arial Narrow',sans-serif;font-size:44px;line-height:1;letter-spacing:.02em;color:#fff}
+.bf-word em{font-style:normal;color:#e91e8c;text-shadow:0 0 18px rgba(233,30,140,.55)}
+.bf-count-lbl{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#bbb;margin-bottom:6px;text-align:center}
+.bf-boxes{display:flex;gap:6px}
+.bf-box{background:var(--bf-panel);border:1px solid rgba(245,197,66,.45);border-radius:10px;min-width:54px;padding:6px 4px;text-align:center}
+.bf-box b{display:block;font-family:'Anton','Impact',sans-serif;font-size:26px;line-height:1.1;color:var(--bf-gold);font-variant-numeric:tabular-nums;font-weight:400}
+.bf-box span{font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:.08em}
+@media(max-width:480px){
+  .bf-inner{justify-content:center;text-align:center;padding:14px 12px}
+  .bf-word{font-size:38px}
+  .bf-box{min-width:48px}
+  .bf-box b{font-size:22px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .bf-word em{animation:bfglow 2.4s ease-in-out infinite}
+  @keyframes bfglow{50%{text-shadow:0 0 28px rgba(233,30,140,.9)}}
+}

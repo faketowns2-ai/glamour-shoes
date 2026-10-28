@@ -4,6 +4,8 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Glamour❤️Shoes Revendedores</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&display=swap"/>
 <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
@@ -22,6 +24,10 @@ const PINK        = "#e91e8c";
 // Link /varejo mostra o preço de varejo (coluna "varejo" da planilha), sem Admin
 const VAREJO      = /^\/varejo/i.test(location.pathname);
 const priceOf     = p => VAREJO ? (+p.varejo||0) : (+p.price||0);
+
+// BLACK FRIDAY: para desligar, troque ativo:true por false. Desliga sozinho após "fim".
+const BF = { ativo:true, fim:"2026-11-27T23:59:59-03:00" };
+const bfOn = () => BF.ativo && Date.now() < new Date(BF.fim).getTime();
 const _SCRIPT_DEFAULT = "https://script.google.com/macros/s/AKfycbw1Pdwu6HC8RzYZplOuhZtYw4kbVcLJPWG35DMElEKiLg4ckebqvRcUHfZMUh_zZu3k/exec";
 
 const SIZES = ["17","18","19","20","21","22","23","24","25","26","27","28","29",
@@ -265,7 +271,43 @@ function render(){
   app.innerHTML="";
   app.appendChild(buildApp());
 }
-function buildApp(){ return ce("div",{},buildHeader(),ce("div",{class:"main"},buildView())); }
+function buildApp(){
+  const bf=bfOn()&&!String(S.view).startsWith("admin");
+  return ce("div",{class:bf?"bf":""},buildHeader(),bf?buildBFBar():null,ce("div",{class:"main"},buildView()));
+}
+
+// ─── BLACK FRIDAY ───────────────────────────────────────────────────────────
+function bfParts(){
+  let ms=Math.max(0,new Date(BF.fim).getTime()-Date.now());
+  const d=Math.floor(ms/864e5); ms-=d*864e5;
+  const h=Math.floor(ms/36e5);  ms-=h*36e5;
+  const m=Math.floor(ms/6e4);   ms-=m*6e4;
+  const s=Math.floor(ms/1e3);
+  return {d,h,m,s};
+}
+function buildBFBar(){
+  const t=bfParts(), two=n=>String(n).padStart(2,"0");
+  const box=(id,val,lbl)=>ce("div",{class:"bf-box"},ce("b",{id},val),ce("span",{},lbl));
+  return ce("div",{class:"bf-bar"},
+    ce("div",{class:"bf-inner"},
+      ce("div",{class:"bf-title"},
+        ce("div",{class:"bf-kicker"},"Glamour❤️Shoes apresenta"),
+        ce("div",{class:"bf-word"},"BLACK ",ce("em",{},"FRIDAY"))),
+      ce("div",{class:"bf-count"},
+        ce("div",{class:"bf-count-lbl"},"Termina em"),
+        ce("div",{class:"bf-boxes"},
+          box("bf-d",two(t.d),"dias"),box("bf-h",two(t.h),"horas"),
+          box("bf-m",two(t.m),"min"),box("bf-s",two(t.s),"seg")))));
+}
+setInterval(()=>{
+  const el=document.getElementById("bf-s");
+  if(!el){ return; }
+  if(!bfOn()){ render(); return; }
+  const t=bfParts(), two=n=>String(n).padStart(2,"0");
+  [["bf-d",t.d],["bf-h",t.h],["bf-m",t.m],["bf-s",t.s]].forEach(([id,v])=>{
+    const e=document.getElementById(id); if(e&&e.textContent!==two(v)) e.textContent=two(v);
+  });
+},1000);
 
 function buildHeader(){
   const cartCount=S.cart.reduce((s,i)=>s+i.qty,0);
