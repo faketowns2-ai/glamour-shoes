@@ -106,7 +106,7 @@ const _savedUrl = lsGet("gs_script","") || lsGet("appsScriptUrl","") || _SCRIPT_
 
 const S={
   view:"catalog", adminTab:"orders", unlocked:false,
-  products: lsGet("gs_prod",DEMO),
+  products: normProds(lsGet("gs_prod",DEMO)),
   orders:   lsGet("gs_ord",[]),
   crm:      lsGet("gs_crm",[]),
   cart:[], sel:{},
@@ -121,6 +121,32 @@ const S={
   _editingOrder: null, _orderEdits:{}, _addItem:{},
   _manualAC:{show:false,query:""},
 };
+
+// ─── OCULTAR PRODUTOS ────────────────────────────────────────────────────────
+// A planilha tem colunas fixas, então o status "oculto" é gravado dentro do
+// JSON da coluna stock (chave "_oculto"). Ao carregar, ele vira p.hidden.
+function normProd(p){
+  if(p&&p.stock&&Object.prototype.hasOwnProperty.call(p.stock,"_oculto")){
+    const st={...p.stock}; p.hidden=!!st._oculto; delete st._oculto; p.stock=st;
+  }
+  return p;
+}
+function normProds(arr){ return (arr||[]).map(normProd); }
+function prodsForSheet(){
+  return S.products.map(p=>{
+    const {hidden,...rest}=p;
+    return hidden?{...rest,stock:{...(p.stock||{}),_oculto:1}}:rest;
+  });
+}
+function totalStock(p){ return Object.values(p.stock||{}).reduce((a,b)=>a+(+b||0),0); }
+async function setHidden(ids,val){
+  const set=new Set(ids.map(String));
+  S.products=S.products.map(p=>set.has(String(p.id))?{...p,hidden:val}:p);
+  render();
+  const ok=await persistProducts(true);
+  toast(ok?(val?"🙈 Oculto do catálogo!":"👁 Visível no catálogo!"):"⚠️ Alterado localmente. Erro na planilha.");
+  render();
+}
 
 function blankForm(){
   return {id:null,code:"",gender:"Feminino",name:"",desc:"",price:"",cost:"",image:"",featured:false,stock:{}};
@@ -144,7 +170,7 @@ async function loadFromSheets(force=false){
     const data=await res.json();
     if(data.ok){
       if(force){
-        if(data.products&&data.products.length>0){ S.products=data.products; lsSet("gs_prod",S.products); }
+        if(data.products&&data.products.length>0){ S.products=normProds(data.products); lsSet("gs_prod",S.products); }
         if(data.orders  &&data.orders.length>0)  { S.orders=data.orders;     lsSet("gs_ord",S.orders);   }
         if(data.crm     &&data.crm.length>0)     { S.crm=data.crm;           lsSet("gs_crm",S.crm);      }
         toast("✅ Dados recarregados da planilha!");
@@ -168,7 +194,7 @@ async function loadFromSheets(force=false){
           lsSet("gs_crm",S.crm);
         }
         if(!window._stockDraft&&data.products&&data.products.length>0){
-          S.products=data.products; lsSet("gs_prod",S.products);
+          S.products=normProds(data.products); lsSet("gs_prod",S.products);
         }
       }
       S.lastSync=nowStr(); lsSet("gs_lastsync",S.lastSync); S.syncError="";
@@ -196,7 +222,7 @@ async function _post(body){
 
 async function persistProducts(force=false){
   lsSet("gs_prod",S.products);
-  const ok=await _post({action:"saveProducts",products:S.products});
+  const ok=await _post({action:"saveProducts",products:prodsForSheet()});
   if(force&&!ok) toast("⚠️ Salvo localmente. Erro na planilha.",4000);
   render(); return ok;
 }
@@ -215,7 +241,7 @@ async function persistCRM(force=false){
 async function syncAll(msg){
   if(!S.scriptUrl){ toast(msg||"Salvo localmente."); return; }
   S.syncing=true; render();
-  const ok=await _post({action:"saveAll",products:S.products,orders:S.orders,crm:S.crm});
+  const ok=await _post({action:"saveAll",products:prodsForSheet(),orders:S.orders,crm:S.crm});
   S.syncError=ok?"":"Erro ao sincronizar";
   toast(ok?(msg||"✅ Sincronizado!"):"⚠️ Salvo localmente. Erro na planilha.",ok?3000:4000);
   S.syncing=false; render();
@@ -275,9 +301,9 @@ function buildView(){
 // ═══════════════════════════════════════════════════════════════════════════
 function buildCatalog(){
   const prods=getFilteredProds();
-  const sizesAvail=SIZES.filter(s=>S.products.some(p=>(p.stock[s]||0)>0));
+  const sizesAvail=SIZES.filter(s=>S.products.some(p=>!p.hidden&&(p.stock[s]||0)>0));
 
-  const banner=S.products.some(p=>p.featured)?ce("div",{style:{
+  const banner=S.products.some(p=>p.featured&&!p.hidden)?ce("div",{style:{
     background:"linear-gradient(135deg,#1a1a2e,#3a1a3a)",borderRadius:"16px",
     padding:"18px 22px",marginBottom:"20px",display:"flex",alignItems:"center",justifyContent:"space-between"}},
     ce("div",{},
@@ -341,7 +367,7 @@ function buildCatalog(){
 }
 
 function getFilteredProds(){
-  let p=[...S.products];
+  let p=S.products.filter(x=>!x.hidden);
   if(S.fGender) p=p.filter(x=>x.gender===S.fGender);
   if(S.fSize)   p=p.filter(x=>(x.stock[S.fSize]||0)>0);
   if(S.fText)   p=p.filter(x=>x.name.toLowerCase().includes(S.fText.toLowerCase()));
@@ -697,7 +723,7 @@ async function confirmOrder(id){
   lsSet("gs_prod",S.products); lsSet("gs_ord",S.orders); lsSet("gs_crm",S.crm);
   render();
   S.syncing=true; render();
-  const ok=await _post({action:"saveAll",products:S.products,orders:S.orders,crm:S.crm});
+  const ok=await _post({action:"saveAll",products:prodsForSheet(),orders:S.orders,crm:S.crm});
   S.syncing=false;
   toast(ok?"✅ Pedido confirmado! Estoque atualizado na planilha.":"✅ Confirmado localmente. ⚠️ Erro na planilha.",ok?3000:5000);
   render();
@@ -1151,17 +1177,28 @@ function buildProds(){
         f.id?ce("button",{class:"btn",style:{padding:"11px 18px",borderRadius:"30px",background:"#eee",color:"#1a1a2e"},
           onclick:()=>{S.pForm=blankForm();render();}},"Cancelar"):null)
     ),
-    ce("h3",{style:{marginBottom:"12px",fontSize:"15px"}},"Produtos Cadastrados"),
-    ...S.products.map(p=>ce("div",{class:"card",style:{display:"flex",alignItems:"center",gap:"12px"}},
+    ce("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",marginBottom:"12px"}},
+      ce("h3",{style:{fontSize:"15px"}},`Produtos Cadastrados (${S.products.filter(p=>p.hidden).length} ocultos)`),
+      (()=>{
+        const esg=S.products.filter(p=>!p.hidden&&totalStock(p)<=0);
+        return esg.length?ce("button",{style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#1a1a2e",color:"#fff",border:"none",fontWeight:700,cursor:"pointer"},
+          onclick:()=>{ if(confirm(`Ocultar ${esg.length} produto(s) com estoque zerado?`)) setHidden(esg.map(p=>p.id),true); }},
+          `🙈 Ocultar esgotados (${esg.length})`):null;
+      })()),
+    ...S.products.map(p=>ce("div",{class:"card",style:{display:"flex",alignItems:"center",gap:"12px",flexWrap:"wrap",opacity:p.hidden?0.55:1}},
       ce("div",{style:{width:"48px",height:"48px",borderRadius:"8px",overflow:"hidden",background:"#eee",flexShrink:0}},
         p.image?ce("img",{src:p.image,alt:"",style:{width:"100%",height:"100%",objectFit:"cover"}}):ce("span",{style:{fontSize:"22px"}},"👠")),
       ce("div",{style:{flex:1}},
-        ce("div",{style:{fontWeight:700,fontSize:"13px"}},`${p.name} ${p.featured?"⭐":""}`),
+        ce("div",{style:{fontWeight:700,fontSize:"13px"}},`${p.name} ${p.featured?"⭐":""}`,
+          p.hidden?ce("span",{style:{marginLeft:"6px",fontSize:"10px",background:"#555",color:"#fff",borderRadius:"10px",padding:"2px 8px"}},"OCULTO"):null,
+          totalStock(p)<=0?ce("span",{style:{marginLeft:"6px",fontSize:"10px",background:"#ffeef0",color:"#e53935",borderRadius:"10px",padding:"2px 8px"}},"ESGOTADO"):null),
         ce("div",{style:{fontSize:"11px",color:"#888"}},
           `${p.gender}${p.code?" • "+p.code:""} • Venda: ${fmt(p.price)} • Custo: ${fmt(p.cost)} • Margem: `,
           ce("span",{style:{color:"#2e7d32",fontWeight:700}},`${p.price>0?((1-p.cost/p.price)*100).toFixed(0):0}%`))),
       ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",borderRadius:"20px",background:"#f0f0f0",color:"#1a1a2e"},
         onclick:()=>{S.pForm={...p,price:String(p.price),cost:String(p.cost),stock:{...p.stock}};render();}},"Editar"),
+      ce("button",{style:{padding:"5px 12px",fontSize:"12px",borderRadius:"20px",background:p.hidden?"#e8f5e9":"#eceff1",color:p.hidden?"#2e7d32":"#37474f",border:"none",fontWeight:700,cursor:"pointer"},
+        onclick:()=>setHidden([p.id],!p.hidden)},p.hidden?"👁 Mostrar":"🙈 Ocultar"),
       ce("button",{style:{padding:"5px 12px",fontSize:"12px",borderRadius:"20px",background:"#ffeef0",color:"#e53935",border:"none",fontWeight:700,cursor:"pointer"},
         onclick:async()=>{S.products=S.products.filter(x=>x.id!==p.id);const ok=await persistProducts(true);toast(ok?"✅ Produto removido da planilha!":"✅ Removido localmente. ⚠️ Erro na planilha.");render();}},"Excluir")
     ))
