@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-10-29c";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-10-29d";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -28,6 +28,7 @@ const GRADE_PADRAO={
 };
 // Link /varejo mostra o preço de varejo (coluna "varejo" da planilha), sem Admin
 const VAREJO      = /^\/varejo/i.test(location.pathname);
+const PAINEL_AFI  = /^\/afiliado/i.test(location.pathname);   // painel do afiliado: /afiliado#chave
 const priceOf     = p => VAREJO ? (+p.varejo||0) : (+p.price||0);
 
 // BLACK FRIDAY: para desligar, troque ativo:true por false. Desliga sozinho após "fim".
@@ -123,6 +124,7 @@ const S={
   token:    lsGet("gs_token",""),
   products: normProds(lsGet("gs_prod",DEMO)),
   afiliados: lsGet("gs_afi",[]),
+  saques:    lsGet("gs_saq",[]),
   orders:   lsGet("gs_ord",[]),
   crm:      lsGet("gs_crm",[]),
   cart:[], sel:{},
@@ -195,6 +197,7 @@ async function loadFromSheets(force=false){
     if(data.ok&&S.token&&!data.admin) logoutLocal("Sessão expirada. Entre de novo no Admin.");
     if(data.ok){
       if(data.afiliados){ S.afiliados=data.afiliados; lsSet("gs_afi",S.afiliados); }
+      if(data.saques){ S.saques=data.saques; lsSet("gs_saq",S.saques); }
       if(force){
         if(data.products&&data.products.length>0){ S.products=normProds(data.products); lsSet("gs_prod",S.products); }
         if(data.orders  &&data.orders.length>0)  { S.orders=data.orders;     lsSet("gs_ord",S.orders);   }
@@ -255,8 +258,8 @@ async function _post(body){
 }
 function logoutLocal(msg){
   S.token=""; S.unlocked=false; lsSet("gs_token","");
-  S.orders=[]; S.crm=[]; S.afiliados=[];
-  ["gs_ord","gs_crm","gs_afi"].forEach(k=>{ try{localStorage.removeItem(k);}catch(e){} });
+  S.orders=[]; S.crm=[]; S.afiliados=[]; S.saques=[];
+  ["gs_ord","gs_crm","gs_afi","gs_saq"].forEach(k=>{ try{localStorage.removeItem(k);}catch(e){} });
   if(msg){ toast(msg,4000); if(String(S.view).startsWith("admin")) S.view="adminLogin"; render(); }
 }
 
@@ -299,6 +302,10 @@ function render(){
   app.appendChild(buildApp());
 }
 function buildApp(){
+  if(PAINEL_AFI) return ce("div",{class:bfOn()?"bf":""},
+    ce("header",{},ce("div",{style:{fontWeight:900,fontSize:"19px",color:"#fff"}},"Glamour❤️Shoes ",
+      ce("span",{style:{fontSize:"12px",fontWeight:400,color:"#ccc"}},"Painel do Afiliado"))),
+    ce("div",{class:"main"},buildAfiPanel()));
   const bf=bfOn()&&!String(S.view).startsWith("admin");
   return ce("div",{class:bf?"bf":""},buildHeader(),bf?buildBFBar():null,ce("div",{class:"main"},buildView()));
 }
@@ -718,7 +725,7 @@ async function tryLogin(p){
 function buildAdmin(){
   const pending=S.orders.filter(o=>o.status==="pending");
   const TABS=[["orders","📋 Pedidos"],["manual","🧾 Manual"],["crm","👥 CRM"],
-              ["dash","📊 Dashboard"],["stock","📦 Estoque"],["prods","🛍 Produtos"],["afi","🤝 Afiliados"],["cfg","⚙️ Config"]];
+              ["dash","📊 Dashboard"],["stock","📦 Estoque"],["prods","🛍 Produtos"],["afi","🤝 Afiliados"],["saq","💸 Saques"],["cfg","⚙️ Config"]];
   return ce("div",{},
     !S.scriptUrl?ce("div",{style:{background:"#fff3cd",borderRadius:"12px",padding:"10px 16px",
       marginBottom:"14px",borderLeft:"4px solid #ffc107",fontSize:"13px",color:"#856404"}},
@@ -726,6 +733,11 @@ function buildAdmin(){
     ce("div",{style:{display:"flex",gap:"7px",marginBottom:"20px",flexWrap:"wrap"}},
       ...TABS.map(([t,label])=>{
         const btn=ce("button",{class:"tab "+(S.adminTab===t?"on":"off"),onclick:()=>{S.adminTab=t;render();}},label);
+        const nSaq=S.saques.filter(q=>q.status==="solicitado"||q.status==="aprovado").length;
+        if(t==="saq"&&nSaq>0) btn.appendChild(
+          ce("span",{style:{position:"absolute",top:"-4px",right:"-4px",background:"#e53935",color:"#fff",
+            borderRadius:"50%",width:"16px",height:"16px",fontSize:"9px",
+            display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}},nSaq));
         if(t==="orders"&&pending.length>0) btn.appendChild(
           ce("span",{style:{position:"absolute",top:"-4px",right:"-4px",background:"#ff9800",color:"#fff",
             borderRadius:"50%",width:"16px",height:"16px",fontSize:"9px",
@@ -740,6 +752,7 @@ function buildAdmin(){
     S.adminTab==="stock" ?buildStock() :
     S.adminTab==="prods" ?buildProds() :
     S.adminTab==="afi"   ?buildAfiliados() :
+    S.adminTab==="saq"   ?buildSaques() :
     buildConfig()
   );
 }
@@ -1452,7 +1465,17 @@ function buildAfiliados(){
           ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap"}},
             ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:"#e3f2fd",color:"#1565c0"},onclick:async()=>{
               try{ await navigator.clipboard.writeText(link); toast("🔗 Link copiado!"); }catch(e){ prompt("Copie o link:",link); }
-            }},"Copiar link"),
+            }},"Copiar link de vendas"),
+            a.chave?ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:"#ede7f6",color:"#4527a0"},onclick:async()=>{
+              const pl=`${CATALOG_URL}/afiliado#${a.chave}`;
+              try{ await navigator.clipboard.writeText(pl); toast("🔗 Link do painel copiado! Envie só para o afiliado."); }catch(e){ prompt("Copie o link do painel:",pl); }
+            }},"Copiar link do painel"):null,
+            a.chave?ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:"#f0f0f0",color:"#1a1a2e"},onclick:async()=>{
+              if(!confirm(`Gerar um novo link do painel para ${a.nome}? O link antigo para de funcionar.`)) return;
+              const d=await _call({action:"novaChave",codigo:a.codigo});
+              if(d.ok){ S.afiliados=d.afiliados; lsSet("gs_afi",S.afiliados); toast("✅ Novo link gerado. Copie e envie ao afiliado."); render(); }
+              else toast(d.error||"Erro ao gerar link",4000);
+            }},"Novo link do painel"):null,
             ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:"#f0f0f0",color:"#1a1a2e"},onclick:()=>{
               const v=prompt(`Nova comissão de ${a.nome} (%)`,a.comissao); if(v===null) return;
               const n=+String(v).replace(",","."); if(!(n>0&&n<=50)) return toast("Comissão entre 1% e 50%.");
@@ -1466,13 +1489,115 @@ function buildAfiliados(){
           ce("span",{},`Faturado: `,ce("b",{},fmt(t.faturado))),
           ce("span",{},`Comissão total: `,ce("b",{},fmt(t.comissaoTotal))),
           ce("span",{style:{color:t.aPagar>0?"#e65100":"#2e7d32"}},`A pagar: `,ce("b",{},fmt(t.aPagar)))),
-        t.aPagar>0?ce("button",{class:"btn",style:{marginTop:"10px",padding:"7px 16px",fontSize:"12px",background:"#4caf50",color:"#fff"},
-          onclick:async()=>{
-            if(!confirm(`Confirma que pagou ${fmt(t.aPagar)} de comissão para ${a.nome}?`)) return;
-            t.aPagarOrds.forEach(o=>{ if(!o.comissao) o.comissao=Math.round(o.total*(+a.comissao||0))/100; o.comissaoPaga=true; });
-            const ok=await persistOrders(true); if(ok) toast("✅ Comissão marcada como paga!");
-          }},`✅ Marcar ${fmt(t.aPagar)} como pago`):null);
+        ce("div",{style:{fontSize:"11px",color:"#888",marginTop:"6px"}},"O afiliado pede o saque pelo painel dele. Os pagamentos ficam na aba 💸 Saques."));
     }));
+}
+
+// ─── SAQUES (ADMIN) ──────────────────────────────────────────────────────────
+const SAQ_LABEL={solicitado:["Solicitado","#fff3e0","#e65100"],aprovado:["Aprovado","#e3f2fd","#1565c0"],
+                 pago:["Pago","#e8f5e9","#2e7d32"],recusado:["Recusado","#ffebee","#c62828"]};
+function saqBadge(st){ const [l,bg,c]=SAQ_LABEL[st]||SAQ_LABEL.solicitado; return ce("span",{class:"badge",style:{background:bg,color:c}},l); }
+async function mudaSaque(q,status){
+  let obs;
+  if(status==="recusado"){ obs=prompt("Motivo da recusa (o afiliado vai ver):",""); if(obs===null) return; }
+  if(status==="pago"&&!confirm(`Confirma que fez o Pix de ${fmt(q.valor)} para ${q.nome}?\nChave: ${q.pix}`)) return;
+  const d=await _call({action:"saqueStatus",id:q.id,status,obs});
+  if(!d.ok) return toast(d.error||"Erro ao atualizar saque",4500);
+  S.saques=d.saques; lsSet("gs_saq",S.saques);
+  toast(status==="pago"?"✅ Saque marcado como pago!":status==="aprovado"?"✅ Saque aprovado!":"Saque recusado.");
+  if(status==="pago") loadFromSheets(false); else render();
+}
+function buildSaques(){
+  if(!S.saqFiltro) S.saqFiltro="abertos";
+  const list=[...S.saques].reverse().filter(q=>S.saqFiltro==="todos"||q.status==="solicitado"||q.status==="aprovado");
+  const pend=S.saques.filter(q=>q.status==="solicitado"||q.status==="aprovado");
+  return ce("div",{},
+    ce("h3",{style:{marginBottom:"6px",fontSize:"17px"}},"💸 Saques dos afiliados"),
+    ce("p",{style:{fontSize:"13px",color:"#888",marginBottom:"12px"}},
+      `${pend.length} em aberto • ${fmt(pend.reduce((s,q)=>s+q.valor,0))} a pagar. O Pix é feito por você, fora do site; depois marque como pago.`),
+    ce("div",{style:{display:"flex",gap:"7px",marginBottom:"14px"}},
+      ...[["abertos","Em aberto"],["todos","Todos"]].map(([v,l])=>ce("button",{class:"tab "+(S.saqFiltro===v?"on":"off"),
+        onclick:()=>{S.saqFiltro=v;render();}},l))),
+    list.length===0?ce("div",{style:{color:"#aaa",textAlign:"center",padding:"30px 0"}},
+      S.saqFiltro==="abertos"?"Nenhum saque esperando pagamento.":"Nenhum saque ainda."):null,
+    ...list.map(q=>ce("div",{class:"card",style:{borderLeft:`4px solid ${(SAQ_LABEL[q.status]||SAQ_LABEL.solicitado)[2]}`}},
+      ce("div",{style:{display:"flex",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",alignItems:"flex-start"}},
+        ce("div",{style:{minWidth:0,flex:"1 1 220px"}},
+          ce("div",{style:{fontWeight:700,fontSize:"14px"}},q.nome,ce("span",{style:{marginLeft:"8px"}},saqBadge(q.status))),
+          ce("div",{style:{fontWeight:800,fontSize:"18px",color:PINK,margin:"4px 0"}},fmt(q.valor)),
+          ce("div",{style:{fontSize:"12px",color:"#555",wordBreak:"break-all"}},`Pix: ${q.pix}`),
+          ce("div",{style:{fontSize:"11px",color:"#888",marginTop:"2px"}},
+            `Pedido em ${q.solicitadoEm} • ${q.pedidos.length} venda${q.pedidos.length!==1?"s":""}${q.atualizadoEm&&q.atualizadoEm!==q.solicitadoEm?` • atualizado em ${q.atualizadoEm}`:""}`),
+          q.obs?ce("div",{style:{fontSize:"12px",color:"#c62828",marginTop:"4px"}},`Obs: ${q.obs}`):null),
+        ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap"}},
+          (q.status==="solicitado"||q.status==="aprovado")?ce("button",{class:"btn",style:{padding:"6px 12px",fontSize:"12px",background:"#e3f2fd",color:"#1565c0"},
+            onclick:async()=>{ try{await navigator.clipboard.writeText(q.pix);toast("Chave Pix copiada!");}catch(e){prompt("Chave Pix:",q.pix);} }},"Copiar Pix"):null,
+          q.status==="solicitado"?ce("button",{class:"btn",style:{padding:"6px 12px",fontSize:"12px",background:"#1565c0",color:"#fff"},onclick:()=>mudaSaque(q,"aprovado")},"Aprovar"):null,
+          (q.status==="solicitado"||q.status==="aprovado")?ce("button",{class:"btn",style:{padding:"6px 12px",fontSize:"12px",background:"#4caf50",color:"#fff"},onclick:()=>mudaSaque(q,"pago")},"Marcar como pago"):null,
+          (q.status==="solicitado"||q.status==="aprovado")?ce("button",{class:"btn",style:{padding:"6px 12px",fontSize:"12px",background:"#ffebee",color:"#c62828"},onclick:()=>mudaSaque(q,"recusado")},"Recusar"):null)))));
+}
+
+// ─── PAINEL DO AFILIADO (/afiliado#chave) ────────────────────────────────────
+async function loadAfiPanel(){
+  const chave=location.hash.replace(/^#/,"").trim();
+  if(!chave){ S.afi={state:"erro",error:"Link incompleto. Peça o link do seu painel para a loja."}; render(); return; }
+  S.afi={...(S.afi||{}),state:S.afi&&S.afi.data?"ok":"loading"}; render();
+  const d=await _call({action:"afiliadoPainel",chave});
+  S.afi=d.ok?{state:"ok",data:d,chave}:{state:"erro",error:d.error||"Não foi possível carregar o painel."};
+  render();
+}
+function buildAfiPanel(){
+  const st=S.afi||{state:"loading"};
+  if(st.state==="loading") return ce("div",{class:"card",style:{textAlign:"center",padding:"40px 20px"}},ce("div",{class:"spin",style:{fontSize:"30px"}},"⏳"),ce("p",{style:{marginTop:"10px"}},"Carregando seu painel..."));
+  if(st.state==="erro") return ce("div",{class:"card",style:{textAlign:"center",padding:"40px 20px"}},ce("div",{style:{fontSize:"36px"}},"🔒"),ce("p",{style:{marginTop:"10px"}},st.error));
+  const d=st.data, a=d.afiliado;
+  const finalizadas=d.vendas.length;
+  const emAberto=d.saques.some(q=>q.status==="solicitado"||q.status==="aprovado");
+  const podeSacar=d.disponivel>=d.saqueMinimo&&!emAberto&&a.ativo;
+  const SIT={recebida:["Recebida","#2e7d32"],em_saque:["Em saque","#1565c0"],disponivel:["Disponível","#e65100"],a_liberar:["A liberar","#888"]};
+  const kpi=(l,v,c)=>ce("div",{class:"card",style:{margin:0,padding:"14px 16px"}},
+    ce("div",{style:{fontSize:"11px",color:"#888",marginBottom:"3px"}},l),ce("div",{style:{fontWeight:800,fontSize:"20px",color:c||"inherit"}},v));
+  return ce("div",{},
+    ce("h2",{style:{marginBottom:"4px"}},`Olá, ${a.nome.split(" ")[0]}!`),
+    ce("p",{style:{fontSize:"13px",color:"#888",marginBottom:"16px"}},`Sua comissão: ${a.comissao}% sobre cada venda finalizada.`),
+    ce("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"10px",marginBottom:"14px"}},
+      kpi("Vendas finalizadas",`${finalizadas} • ${fmt(d.faturado)}`),
+      kpi("Disponível para saque",fmt(d.disponivel),PINK),
+      kpi(`A liberar (${d.diasLiberacao} dias após a venda)`,fmt(d.aLiberar)),
+      kpi("Em saque",fmt(d.emSaque),"#1565c0"),
+      kpi("Já recebido",fmt(d.recebido),"#2e7d32")),
+    ce("div",{class:"card"},
+      ce("div",{style:{fontWeight:700,marginBottom:"6px"}},"Solicitar saque"),
+      ce("p",{style:{fontSize:"13px",color:"#888",marginBottom:"10px"}},
+        emAberto?"Você já tem um saque em andamento. Aguarde o pagamento para pedir outro."
+        :`O valor disponível vai por Pix para a chave ${a.pix||"(não cadastrada, fale com a loja)"}. Saque mínimo: ${fmt(d.saqueMinimo)}.`),
+      ce("button",{class:"btn",disabled:!podeSacar||!!S.busy,style:{width:"100%",padding:"12px 0",borderRadius:"30px",background:PINK,color:"#fff"},
+        onclick:async()=>{
+          if(!confirm(`Pedir saque de ${fmt(d.disponivel)} para a chave Pix ${a.pix}?`)) return;
+          S.busy=true; render();
+          const r=await _call({action:"solicitarSaque",chave:st.chave});
+          S.busy=false;
+          toast(r.ok?"✅ Saque solicitado! A loja vai fazer o Pix.":(r.error||"Erro ao solicitar saque"),4500);
+          loadAfiPanel();
+        }},podeSacar?`💸 Sacar ${fmt(d.disponivel)}`:"Sem saldo disponível para saque")),
+    ce("div",{class:"card"},
+      ce("div",{style:{fontWeight:700,marginBottom:"6px"}},"Seu link de vendas"),
+      ce("div",{style:{fontSize:"12px",wordBreak:"break-all",marginBottom:"8px"}},d.link),
+      ce("button",{class:"btn",style:{background:"#e3f2fd",color:"#1565c0"},onclick:async()=>{
+        try{await navigator.clipboard.writeText(d.link);toast("🔗 Link copiado!");}catch(e){prompt("Copie seu link:",d.link);} }},"Copiar link")),
+    d.saques.length?ce("div",{class:"card"},
+      ce("div",{style:{fontWeight:700,marginBottom:"8px"}},"Seus saques"),
+      ...d.saques.map(q=>ce("div",{style:{display:"flex",justifyContent:"space-between",gap:"8px",flexWrap:"wrap",padding:"8px 0",borderTop:"1px solid #eee",fontSize:"13px"}},
+        ce("span",{},q.solicitadoEm.split(",")[0]),ce("b",{},fmt(q.valor)),saqBadge(q.status),
+        q.obs?ce("div",{style:{width:"100%",fontSize:"12px",color:"#c62828"}},q.obs):null))):null,
+    ce("div",{class:"card"},
+      ce("div",{style:{fontWeight:700,marginBottom:"8px"}},"Vendas finalizadas"),
+      d.vendas.length===0?ce("div",{style:{color:"#aaa",fontSize:"13px"}},"Nenhuma venda finalizada ainda. Compartilhe seu link!"):null,
+      ...d.vendas.map(v=>{ const [l,c]=SIT[v.situacao]||SIT.a_liberar;
+        return ce("div",{style:{display:"flex",justifyContent:"space-between",gap:"8px",flexWrap:"wrap",padding:"8px 0",borderTop:"1px solid #eee",fontSize:"13px"}},
+          ce("span",{},`${v.data.split("-").reverse().join("/")} • ${v.itens} par${v.itens!==1?"es":""} • ${fmt(v.total)}`),
+          ce("span",{},ce("b",{},fmt(v.comissao)),ce("span",{style:{marginLeft:"8px",fontSize:"11px",color:c,fontWeight:700}},l))); })),
+    ce("p",{style:{fontSize:"11px",color:"#888",textAlign:"center",margin:"8px 0 20px"}},"Este link é pessoal. Não compartilhe com ninguém."));
 }
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
@@ -1542,11 +1667,11 @@ function buildConfig(){
 // INICIALIZAÇÃO
 // ═══════════════════════════════════════════════════════════════════════════
 captureRef();
+if(PAINEL_AFI){ loadAfiPanel(); window.addEventListener("hashchange",loadAfiPanel); }
 if(!S.token) logoutLocal("");   // visitante não guarda pedidos nem clientes no aparelho
 render();
 
-checkPaymentReturn();
-if(S.scriptUrl) loadFromSheets(false);
+if(!PAINEL_AFI){ checkPaymentReturn(); if(S.scriptUrl) loadFromSheets(false); }
 
 // Aviso quando o site foi atualizado e este aparelho está com a versão antiga
 let _verAtual=null;

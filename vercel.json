@@ -1,5 +1,6 @@
 {
   "rewrites": [
-    { "source": "/varejo", "destination": "/index.html" }
+    { "source": "/varejo", "destination": "/index.html" },
+    { "source": "/afiliado", "destination": "/index.html" }
   ]
 }
