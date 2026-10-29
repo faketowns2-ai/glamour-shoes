@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-10-29a";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-10-29b";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Link /varejo mostra o preço de varejo (coluna "varejo" da planilha), sem Admin
 const VAREJO      = /^\/varejo/i.test(location.pathname);
 const priceOf     = p => VAREJO ? (+p.varejo||0) : (+p.price||0);
@@ -1332,6 +1332,7 @@ function buildProds(){
             if(!Object.keys(stock).length) return toast("Selecione ao menos um número!");
             const img=String(image||"").trim();
             if(img&&(!/^https?:\/\//i.test(img)||img.length>1500)) return toast("Link da foto inválido. Use o link direto do ImgBB (https://i.ibb.co/...).",5000);
+            if(/^https?:\/\/(www\.)?ibb\.co\//i.test(img)) return toast("Esse é o link da página do ImgBB, não da foto. No ImgBB, em Códigos de incorporação, escolha \"Links diretos\" e copie o link que começa com https://i.ibb.co/",8000);
             const prod={code,gender,name,desc,price:+price,cost:+cost,varejo:+varejo||0,image:img,featured,stock};
             const before=S.products, formBefore=S.pForm;
             if(id) S.products=S.products.map(p=>String(p.id)===String(id)?{...p,...prod}:p);
