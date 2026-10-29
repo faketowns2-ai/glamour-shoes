@@ -20,6 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
+const APP_VERSION = "2026-10-29a";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Link /varejo mostra o preço de varejo (coluna "varejo" da planilha), sem Admin
 const VAREJO      = /^\/varejo/i.test(location.pathname);
 const priceOf     = p => VAREJO ? (+p.varejo||0) : (+p.price||0);
@@ -256,8 +257,11 @@ function logoutLocal(msg){
 
 async function persistProducts(force=false){
   lsSet("gs_prod",S.products);
-  const ok=await _post({action:"saveProducts",products:prodsForSheet()});
-  if(force&&!ok) toast("⚠️ Salvo localmente. Erro na planilha.",4000);
+  const d=await _call({action:"saveProducts",products:prodsForSheet()});
+  const ok=!!d.ok;
+  if(ok){ S.lastSync=nowStr(); lsSet("gs_lastsync",S.lastSync); S.lastError=""; }
+  else S.lastError=d.auth===false?"sessão expirada, entre de novo no Admin":(d.error||"erro na planilha");
+  if(force&&!ok) toast(`⚠️ Erro na planilha: ${S.lastError}`,5000);
   render(); return ok;
 }
 async function persistOrders(force=false){
@@ -438,7 +442,7 @@ function buildCatalog(){
 }
 
 function getFilteredProds(){
-  let p=S.products.filter(x=>!x.hidden&&priceOf(x)>0);
+  let p=S.products.filter(x=>!x.hidden&&priceOf(x)>0&&Object.keys(x.stock||{}).length>0);
   if(S.fGender) p=p.filter(x=>x.gender===S.fGender);
   if(S.fSize)   p=p.filter(x=>(x.stock[S.fSize]||0)>0);
   if(S.fText)   p=p.filter(x=>x.name.toLowerCase().includes(S.fText.toLowerCase()));
@@ -1326,13 +1330,20 @@ function buildProds(){
             const{id,code,gender,name,desc,price,cost,varejo,image,featured,stock}=S.pForm;
             if(!name||!price||!cost) return toast("Nome, preço e custo são obrigatórios!");
             if(!Object.keys(stock).length) return toast("Selecione ao menos um número!");
-            const prod={code,gender,name,desc,price:+price,cost:+cost,varejo:+varejo||0,image,featured,stock};
-            if(id) S.products=S.products.map(p=>p.id===id?{...p,...prod}:p);
-            else   S.products.push({id:Date.now(),...prod});
+            const img=String(image||"").trim();
+            if(img&&(!/^https?:\/\//i.test(img)||img.length>1500)) return toast("Link da foto inválido. Use o link direto do ImgBB (https://i.ibb.co/...).",5000);
+            const prod={code,gender,name,desc,price:+price,cost:+cost,varejo:+varejo||0,image:img,featured,stock};
+            const before=S.products, formBefore=S.pForm;
+            if(id) S.products=S.products.map(p=>String(p.id)===String(id)?{...p,...prod}:p);
+            else   S.products=[...S.products,{id:String(Date.now()),...prod}];
             S.pForm=blankForm(); render();
-            const ok=await persistProducts(true);
-            toast(ok?(id?"✅ Produto atualizado na planilha!":"✅ Produto cadastrado na planilha!")
-                    :(id?"✅ Atualizado localmente. ⚠️ Erro na planilha.":"✅ Cadastrado localmente. ⚠️ Erro na planilha."));
+            const ok=await persistProducts(false);
+            if(ok){ toast(id?"✅ Produto atualizado na planilha!":"✅ Produto cadastrado na planilha!"); }
+            else{
+              // desfaz: o produto só aparece no site depois que a planilha aceitar
+              S.products=before; S.pForm=formBefore; lsSet("gs_prod",S.products);
+              toast(`⚠️ Não salvou: ${S.lastError||"erro na planilha"}. Nada foi alterado.`,6000);
+            }
             render();
           }},f.id?"Salvar Alterações":"Cadastrar Produto"),
         f.id?ce("button",{class:"btn",style:{padding:"11px 18px",borderRadius:"30px",background:"#eee",color:"#1a1a2e"},
@@ -1352,7 +1363,9 @@ function buildProds(){
       ce("div",{style:{flex:1}},
         ce("div",{style:{fontWeight:700,fontSize:"13px"}},`${p.name} ${p.featured?"⭐":""}`,
           p.hidden?ce("span",{style:{marginLeft:"6px",fontSize:"10px",background:"#555",color:"#fff",borderRadius:"10px",padding:"2px 8px"}},"OCULTO"):null,
-          totalStock(p)<=0?ce("span",{style:{marginLeft:"6px",fontSize:"10px",background:"#ffeef0",color:"#e53935",borderRadius:"10px",padding:"2px 8px"}},"ESGOTADO"):null),
+          totalStock(p)<=0?ce("span",{style:{marginLeft:"6px",fontSize:"10px",background:"#ffeef0",color:"#e53935",borderRadius:"10px",padding:"2px 8px"}},"ESGOTADO"):null,
+          (!p.image||!Object.keys(p.stock||{}).length)?ce("span",{style:{marginLeft:"6px",fontSize:"10px",background:"#fff3cd",color:"#856404",borderRadius:"10px",padding:"2px 8px"}},
+            !Object.keys(p.stock||{}).length?"INCOMPLETO: sem numeração":"INCOMPLETO: sem foto"):null),
         ce("div",{style:{fontSize:"11px",color:"#888"}},
           `${p.gender}${p.code?" • "+p.code:""} • Atacado: ${fmt(p.price)} • Varejo: ${p.varejo?fmt(p.varejo):"sem preço"} • Custo: ${fmt(p.cost)} • Margem: `,
           ce("span",{style:{color:"#2e7d32",fontWeight:700}},`${p.price>0?((1-p.cost/p.price)*100).toFixed(0):0}%`))),
@@ -1524,6 +1537,24 @@ render();
 
 checkPaymentReturn();
 if(S.scriptUrl) loadFromSheets(false);
+
+// Aviso quando o site foi atualizado e este aparelho está com a versão antiga
+let _verAtual=null;
+async function checkNewVersion(){
+  try{
+    const t=await (await fetch("/",{cache:"no-store"})).text();
+    const m=t.match(/const APP_VERSION\s*=\s*"([^"]+)"/);
+    if(m&&m[1]!==APP_VERSION&&!document.getElementById("upd-bar")){
+      const bar=ce("div",{id:"upd-bar",style:{position:"fixed",left:"0",right:"0",bottom:"0",zIndex:"9000",background:"#1a1a2e",color:"#fff",
+        padding:"12px 16px",display:"flex",gap:"10px",alignItems:"center",justifyContent:"center",flexWrap:"wrap",fontSize:"14px"}},
+        "Há uma versão nova do site.",
+        ce("button",{class:"btn",style:{background:PINK,color:"#fff",padding:"7px 16px"},onclick:()=>location.reload()},"Atualizar agora"));
+      document.body.appendChild(bar);
+    }
+  }catch(e){}
+}
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") checkNewVersion(); });
+setInterval(checkNewVersion,600000);
 
 // Sync automático a cada 30 minutos (silencioso)
 setInterval(()=>{ if(S.scriptUrl&&!S.syncing) loadFromSheets(false); }, 1800000);
