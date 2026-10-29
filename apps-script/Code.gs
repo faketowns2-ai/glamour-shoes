@@ -13,7 +13,7 @@ const H_ORD  = ["id","date","dateStr","client","phone","items","total","status",
 const H_CRM  = ["id","name","phone","orders","pending","lastOrder","since"];
 const H_AFI  = ["codigo","nome","whatsapp","pix","comissao","ativo","criado","chave"];
 const H_SAQ  = ["id","codigo","nome","valor","pix","status","solicitadoEm","atualizadoEm","pedidos","obs"];
-const DIAS_LIBERACAO = 7;   // comissão só fica disponível para saque depois do prazo de troca
+const DIAS_LIBERACAO = 1;   // comissão fica disponível para saque 1 dia depois da venda
 const SAQUE_MINIMO   = 10;  // R$
 
 function doGet(e)  { return handleRequest(e); }
