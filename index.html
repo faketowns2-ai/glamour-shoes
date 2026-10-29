@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-10-29e";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-10-29f";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -592,11 +592,10 @@ function buildCheckout(){
           ce("span",{style:{fontWeight:600}},fmt(i.price*i.qty)))),
         ce("div",{style:{borderTop:"1px solid #ddd",marginTop:"8px",paddingTop:"8px",fontWeight:800,
           color:PINK,display:"flex",justifyContent:"space-between"}},ce("span",{},"Total"),ce("span",{},fmt(total)))),
-      VAREJO?ce("button",{class:"btn",disabled:!!S.busy,style:{width:"100%",padding:"14px 0",fontSize:"15px",borderRadius:"30px",
-        background:PINK,color:"#fff",marginBottom:"10px"},onclick:doPay},S.busy?"Gerando pagamento...":"💳 Pagar agora (Pix ou cartão)"):null,
+      ce("button",{class:"btn",disabled:!!S.busy,style:{width:"100%",padding:"14px 0",fontSize:"15px",borderRadius:"30px",
+        background:PINK,color:"#fff",marginBottom:"10px"},onclick:doPay},S.busy?"Gerando pagamento...":"💳 Pagar agora (Pix ou cartão)"),
       ce("button",{class:"btn",disabled:!!S.busy,style:{width:"100%",padding:"13px 0",fontSize:"15px",borderRadius:"30px",
-        background:VAREJO?"#eee":"#25d366",color:VAREJO?"#1a1a2e":"#fff",marginBottom:"10px"},onclick:doFinalize},
-        VAREJO?"📲 Prefiro combinar no WhatsApp":"📲 Enviar Pedido no WhatsApp"),
+        background:"#eee",color:"#1a1a2e",marginBottom:"10px"},onclick:doFinalize},"📲 Prefiro combinar no WhatsApp"),
       ce("button",{class:"btn",style:{width:"100%",padding:"11px 0",borderRadius:"30px",background:"#eee",color:"#1a1a2e"},
         onclick:()=>go("cart")},"Voltar")
     )
