@@ -272,6 +272,15 @@ function readSheet_(ss, name) {
 }
 function rowObj_(hdr, r) { const o = {}; hdr.forEach((h, i) => { o[h.toLowerCase()] = r[i]; }); return o; }
 function parseJ_(v, d) { if (typeof v !== "string") return v || d; try { return JSON.parse(v); } catch (e) { return d; } }
+// A planilha transforma "2026-10-28" em data; aqui volta sempre para o texto aaaa-mm-dd
+function dataISO_(v) {
+  if (v instanceof Date && !isNaN(v)) return Utilities.formatDate(v, TZ, "yyyy-MM-dd");
+  const s = String(v || "");
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return m[0];
+  const d = new Date(s);
+  return isNaN(d) ? s : Utilities.formatDate(d, TZ, "yyyy-MM-dd");
+}
 function bool_(v) { return v === true || v === "true" || v === "TRUE"; }
 
 function loadProducts(ss) {
@@ -299,7 +308,7 @@ function rowToOrder_(hdr, r) {
   const o = rowObj_(hdr, r);
   return {
     id:      o.id,
-    date:    String(o.date    || ""),
+    date:    dataISO_(o.date),
     dateStr: String(o.datestr || ""),
     client:  String(o.client  || ""),
     phone:   String(o.phone   || ""),
