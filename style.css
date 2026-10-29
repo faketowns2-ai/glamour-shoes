@@ -110,7 +110,7 @@ body:has(.bf) .toast-el{background:#e6b655;color:#111}
 .bf [style*="background: rgb(247, 240, 245)"]{background:#0f0f11!important;border:1px solid var(--bf-line)}
 .bf [style*="color: rgb(26, 26, 46)"]{color:var(--bf-text)!important}
 .bf [style*="color: rgb(85, 85, 85)"],.bf [style*="color: rgb(119, 119, 119)"]{color:var(--bf-muted)!important}
-.bf [style*="border-top: 1px solid rgb(221, 221, 221)"]{border-top-color:var(--bf-line)!important}
+.bf [style*="border-top: 1px solid rgb(221, 221, 221)"],.bf [style*="border-top: 1px solid rgb(238, 238, 238)"]{border-top-color:var(--bf-line)!important}
 
 /* faixa de gênero e etiqueta: tudo dourado, sem arco-íris */
 .bf .product-card > div[style*="height: 8px"]{background:linear-gradient(90deg,var(--bf-gold-2),var(--bf-gold),var(--bf-gold-2))!important;height:3px!important}
