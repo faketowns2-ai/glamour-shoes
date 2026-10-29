@@ -20,7 +20,12 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-10-29b";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-10-29c";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+// Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
+const GRADE_PADRAO={
+  Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
+  Masculino:{"38":1,"39":2,"40":3,"41":3,"42":2,"43":1},
+};
 // Link /varejo mostra o preço de varejo (coluna "varejo" da planilha), sem Admin
 const VAREJO      = /^\/varejo/i.test(location.pathname);
 const priceOf     = p => VAREJO ? (+p.varejo||0) : (+p.price||0);
@@ -167,7 +172,7 @@ async function setHidden(ids,val){
 }
 
 function blankForm(){
-  return {id:null,code:"",gender:"Feminino",name:"",desc:"",price:"",cost:"",varejo:"",image:"",featured:false,stock:{}};
+  return {id:null,code:"",gender:"Feminino",name:"",desc:"",price:"",cost:"",varejo:"",image:"",featured:false,stock:{...GRADE_PADRAO.Feminino}};
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1298,7 +1303,11 @@ function buildProds(){
             ...["Feminino","Masculino","Infantil"].map(g=>
               ce("button",{style:{padding:"6px 14px",borderRadius:"20px",border:"none",fontWeight:700,fontSize:"12px",
                 background:f.gender===g?PINK:"#eee",color:f.gender===g?"#fff":"#1a1a2e"},
-                onclick:()=>{S.pForm.gender=g;render();}},g)))),
+                onclick:()=>{
+                  S.pForm.gender=g;
+                  // só em produto novo: na edição o estoque real não é tocado
+                  if(!S.pForm.id) S.pForm.stock=GRADE_PADRAO[g]?{...GRADE_PADRAO[g]}:{};
+                  render();}},g)))),
         (()=>{
           const cb=ce("input",{type:"checkbox",style:{width:"16px",height:"16px"}});
           cb.checked=!!f.featured;
