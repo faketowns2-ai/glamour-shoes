@@ -11,7 +11,10 @@ const TZ          = "America/Belem";
 const H_PROD = ["id","code","gender","name","desc","price","cost","image","featured","stock","varejo"];
 const H_ORD  = ["id","date","dateStr","client","phone","items","total","status","origin","ref","comissao","comissaoPaga","pago","pagamento"];
 const H_CRM  = ["id","name","phone","orders","pending","lastOrder","since"];
-const H_AFI  = ["codigo","nome","whatsapp","pix","comissao","ativo","criado"];
+const H_AFI  = ["codigo","nome","whatsapp","pix","comissao","ativo","criado","chave"];
+const H_SAQ  = ["id","codigo","nome","valor","pix","status","solicitadoEm","atualizadoEm","pedidos","obs"];
+const DIAS_LIBERACAO = 7;   // comissão só fica disponível para saque depois do prazo de troca
+const SAQUE_MINIMO   = 10;  // R$
 
 function doGet(e)  { return handleRequest(e); }
 function doPost(e) { return handleRequest(e); }
@@ -39,7 +42,7 @@ function handleRequest(e) {
         // Visitante não vê preço de custo, pedidos, clientes nem afiliados
         const prods = loadProducts(ss);
         const out = { ok: true, admin: admin, products: admin ? prods : prods.map(x => { const c = Object.assign({}, x); delete c.cost; return c; }) };
-        if (admin) { out.orders = loadOrders(ss); out.crm = loadCRM(ss); out.afiliados = loadAfiliados(ss); }
+        if (admin) { out.orders = loadOrders(ss); out.crm = loadCRM(ss); out.afiliados = withLock_(() => ensureChaves_(ss)); out.saques = loadSaques(ss); }
         return json_(out);
       }
       case "login":      return json_(login_(p.pass));
@@ -54,6 +57,16 @@ function handleRequest(e) {
       case "checkout":    return json_(withLock_(() => createOrder_(ss, p, true)));
       case "confirm":
       case "webhook":     return json_(withLock_(() => confirmPayment_(ss, p)));
+      case "afiliadoPainel": return json_(afiliadoPainel_(ss, p.chave));
+      case "solicitarSaque": return json_(withLock_(() => solicitarSaque_(ss, p.chave)));
+      case "saqueStatus": {
+        if (!admin) return json_({ ok: false, auth: false, error: "Faça login novamente." });
+        return json_(withLock_(() => saqueStatus_(ss, p.id, p.status, p.obs)));
+      }
+      case "novaChave": {
+        if (!admin) return json_({ ok: false, auth: false, error: "Faça login novamente." });
+        return json_(withLock_(() => novaChave_(ss, p.codigo)));
+      }
       case "saveProducts": case "saveOrders": case "saveCRM": case "saveAll": case "saveAfiliados": {
         if (!admin) return json_({ ok: false, auth: false, error: "Faça login novamente." });
         withLock_(() => {
@@ -335,7 +348,8 @@ function loadAfiliados(ss) {
       pix:      String(o.pix || ""),
       comissao: Number(o.comissao || 0),
       ativo:    o.ativo === "" || o.ativo === undefined ? true : bool_(o.ativo),
-      criado:   String(o.criado || "")
+      criado:   String(o.criado || ""),
+      chave:    String(o.chave || "")
     };
   });
 }
@@ -396,7 +410,8 @@ function saveOrders(ss, orders) {
   const merged = orders.map(o => {
     const k = String(o.id); seen[k] = true;
     const s = byId[k];
-    if (s && s.pago && !o.pago) return Object.assign({}, s, { comissaoPaga: !!o.comissaoPaga });
+    if (s && s.pago && !o.pago) return Object.assign({}, s, { comissaoPaga: !!o.comissaoPaga || s.comissaoPaga });
+    if (s && s.comissaoPaga) o.comissaoPaga = true;   // pago por saque não volta atrás
     if (s && s.pagamento && s.pagamento.link && !(o.pagamento && o.pagamento.link)) o.pagamento = s.pagamento;
     return o;
   });
@@ -427,10 +442,116 @@ function saveCRM(ss, crm) {
   ]));
 }
 
+function novaChave__() { return Utilities.getUuid().replace(/-/g, "").slice(0, 24); }
 function saveAfiliados(ss, afis) {
-  writeAll_(ss, "Afiliados", H_AFI, afis.map(a => [
-    String(a.codigo || "").toLowerCase(), a.nome || "", a.whatsapp || "", a.pix || "",
-    Number(a.comissao || 0), a.ativo === false ? false : true, a.criado || ""
-  ]));
+  // a chave do painel nunca vem do site: preserva a da planilha ou cria uma nova
+  const chaves = {};
+  loadAfiliados(ss).forEach(a => { chaves[a.codigo] = a.chave; });
+  writeAll_(ss, "Afiliados", H_AFI, afis.map(a => {
+    const cod = String(a.codigo || "").toLowerCase();
+    return [cod, a.nome || "", a.whatsapp || "", a.pix || "", Number(a.comissao || 0),
+            a.ativo === false ? false : true, a.criado || "", chaves[cod] || novaChave__()];
+  }));
+}
+function ensureChaves_(ss) {
+  const afis = loadAfiliados(ss);
+  if (afis.some(a => !a.chave)) { saveAfiliados(ss, afis); return loadAfiliados(ss); }
+  return afis;
+}
+function novaChave_(ss, codigo) {
+  const afis = loadAfiliados(ss);
+  const a = afis.find(x => x.codigo === String(codigo || "").toLowerCase());
+  if (!a) return { ok: false, error: "Afiliado não encontrado." };
+  a.chave = "";
+  const chaves = {}; afis.forEach(x => { chaves[x.codigo] = x.chave; });
+  writeAll_(ss, "Afiliados", H_AFI, afis.map(x => [x.codigo, x.nome, x.whatsapp, x.pix, x.comissao, x.ativo, x.criado, x.chave || novaChave__()]));
+  return { ok: true, afiliados: loadAfiliados(ss) };
+}
+
+// ── PAINEL DO AFILIADO E SAQUES ─────────────────────────────────────────────
+function loadSaques(ss) {
+  const t = readSheet_(ss, "Saques");
+  if (!t) return [];
+  return t.rows.map(r => {
+    const o = rowObj_(t.hdr, r);
+    return { id: String(o.id), codigo: String(o.codigo || ""), nome: String(o.nome || ""), valor: Number(o.valor || 0),
+             pix: String(o.pix || ""), status: String(o.status || "solicitado"), solicitadoEm: String(o.solicitadoem || ""),
+             atualizadoEm: String(o.atualizadoem || ""), pedidos: parseJ_(o.pedidos, []), obs: String(o.obs || "") };
+  });
+}
+function saveSaques_(ss, saques) {
+  writeAll_(ss, "Saques", H_SAQ, saques.map(q => [q.id, q.codigo, q.nome, q.valor, q.pix, q.status, q.solicitadoEm,
+    q.atualizadoEm || "", JSON.stringify(q.pedidos || []), q.obs || ""]));
+}
+function comissaoDe_(o, a) { return Number(o.comissao) || round2_(o.total * (Number(a.comissao) || 0) / 100); }
+function liberado_(o) {
+  const d = new Date(String(o.date) + "T12:00:00");
+  return !isNaN(d) && (Date.now() - d.getTime()) >= DIAS_LIBERACAO * 864e5;
+}
+function resumoAfiliado_(ss, a) {
+  const saques = loadSaques(ss).filter(q => q.codigo === a.codigo);
+  const emSaque = {};
+  saques.filter(q => q.status === "solicitado" || q.status === "aprovado").forEach(q => q.pedidos.forEach(id => { emSaque[String(id)] = q.id; }));
+  const ords = loadOrders(ss).filter(o => o.ref === a.codigo && o.status === "confirmed");
+  const vendas = ords.map(o => {
+    const com = comissaoDe_(o, a);
+    let situacao = o.comissaoPaga ? "recebida" : emSaque[String(o.id)] ? "em_saque" : liberado_(o) ? "disponivel" : "a_liberar";
+    return { id: String(o.id), data: o.date, itens: o.items.reduce((s, i) => s + (Number(i.qty) || 0), 0), total: o.total, comissao: com, situacao: situacao };
+  });
+  const soma = sit => round2_(vendas.filter(v => v.situacao === sit).reduce((s, v) => s + v.comissao, 0));
+  return { vendas: vendas, saques: saques, disponivel: soma("disponivel"), aLiberar: soma("a_liberar"),
+           emSaque: soma("em_saque"), recebido: soma("recebida"),
+           faturado: round2_(vendas.reduce((s, v) => s + v.total, 0)) };
+}
+function achaAfiliado_(ss, chave) {
+  if (!chave || !/^[a-f0-9]{24}$/.test(String(chave))) return null;
+  return loadAfiliados(ss).find(a => a.chave === String(chave)) || null;
+}
+function afiliadoPainel_(ss, chave) {
+  const a = achaAfiliado_(ss, chave);
+  if (!a) return { ok: false, error: "Link inválido. Peça um novo link para a loja." };
+  const r = resumoAfiliado_(ss, a);
+  return { ok: true, afiliado: { nome: a.nome, codigo: a.codigo, comissao: a.comissao, pix: a.pix, ativo: a.ativo },
+           link: SITE_URL + "/varejo?ref=" + a.codigo, diasLiberacao: DIAS_LIBERACAO, saqueMinimo: SAQUE_MINIMO,
+           vendas: r.vendas.sort((x, y) => String(y.id).localeCompare(String(x.id))),
+           saques: r.saques.map(q => ({ id: q.id, valor: q.valor, status: q.status, solicitadoEm: q.solicitadoEm, atualizadoEm: q.atualizadoEm, obs: q.obs })).reverse(),
+           disponivel: r.disponivel, aLiberar: r.aLiberar, emSaque: r.emSaque, recebido: r.recebido, faturado: r.faturado };
+}
+function solicitarSaque_(ss, chave) {
+  const a = achaAfiliado_(ss, chave);
+  if (!a) return { ok: false, error: "Link inválido." };
+  if (!a.pix) return { ok: false, error: "Sua chave Pix não está cadastrada. Fale com a loja." };
+  const r = resumoAfiliado_(ss, a);
+  if (r.saques.some(q => q.status === "solicitado" || q.status === "aprovado")) return { ok: false, error: "Você já tem um saque em andamento." };
+  if (r.disponivel < SAQUE_MINIMO) return { ok: false, error: `O saque mínimo é de R$ ${SAQUE_MINIMO},00.` };
+  const now = Utilities.formatDate(new Date(), TZ, "dd/MM/yyyy, HH:mm:ss");
+  const saques = loadSaques(ss);
+  const q = { id: String(Date.now()), codigo: a.codigo, nome: a.nome, valor: r.disponivel, pix: a.pix, status: "solicitado",
+              solicitadoEm: now, atualizadoEm: now, pedidos: r.vendas.filter(v => v.situacao === "disponivel").map(v => v.id), obs: "" };
+  saques.push(q);
+  saveSaques_(ss, saques);
+  return { ok: true, saque: { id: q.id, valor: q.valor } };
+}
+function saqueStatus_(ss, id, status, obs) {
+  const ok = ["aprovado", "pago", "recusado"];
+  if (ok.indexOf(status) < 0) return { ok: false, error: "Status inválido." };
+  const saques = loadSaques(ss);
+  const q = saques.find(x => x.id === String(id));
+  if (!q) return { ok: false, error: "Saque não encontrado." };
+  if (q.status === "pago" || q.status === "recusado") return { ok: false, error: "Este saque já foi finalizado." };
+  q.status = status;
+  q.atualizadoEm = Utilities.formatDate(new Date(), TZ, "dd/MM/yyyy, HH:mm:ss");
+  if (obs !== undefined) q.obs = String(obs || "").slice(0, 200);
+  if (status === "pago") {
+    // marca a comissão dos pedidos incluídos como paga
+    const sh = ss.getSheetByName("Pedidos");
+    const rows = sh.getDataRange().getValues();
+    const hdr = rows[0].map(h => String(h).trim());
+    const iId = hdr.indexOf("id"), iCP = hdr.indexOf("comissaoPaga");
+    const set = {}; q.pedidos.forEach(x => { set[String(x)] = true; });
+    for (let i = 1; i < rows.length; i++) if (set[String(rows[i][iId])]) sh.getRange(i + 1, iCP + 1).setValue(true);
+  }
+  saveSaques_(ss, saques);
+  return { ok: true, saques: loadSaques(ss) };
 }
 
