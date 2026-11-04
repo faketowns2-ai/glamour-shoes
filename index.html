@@ -912,31 +912,42 @@ async function confirmOrder(id){
 
 // ─── MANUAL ──────────────────────────────────────────────────────────────────
 function buildManual(){
-  if(!S._manualAC) S._manualAC={show:false,query:""};
-  const filtCRM=S._manualAC.query.length>0
-    ?S.crm.filter(c=>c.name.toLowerCase().includes(S._manualAC.query.toLowerCase())||c.phone.includes(S._manualAC.query))
-    :[];
+  const acNorm=t=>String(t||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
+  const acDig=t=>String(t||"").replace(/\D/g,"");
 
   const nameWrap=ce("div",{style:{position:"relative"}});
-  const nameInp=ce("input",{type:"text",class:"inp",placeholder:"Busque cliente ou digite o nome..."});
-  nameInp.value=S.manualName;
-  nameInp.addEventListener("input",e=>{S.manualName=e.target.value;S._manualAC.query=e.target.value;S._manualAC.show=true;render();});
-  nameInp.addEventListener("focus",e=>{S._manualAC.query=e.target.value;S._manualAC.show=true;render();});
-  nameInp.addEventListener("blur",()=>setTimeout(()=>{S._manualAC.show=false;render();},200));
+  const nameInp=ce("input",{type:"text",class:"inp",autocomplete:"off",placeholder:"Busque por nome ou telefone..."});
+  nameInp.value=S.manualName||"";
+  const drop=ce("div",{class:"ac-drop",style:{display:"none"}});
   nameWrap.appendChild(nameInp);
+  nameWrap.appendChild(drop);
 
-  if(S._manualAC.show&&filtCRM.length>0){
-    const drop=ce("div",{class:"ac-drop"});
-    filtCRM.slice(0,6).forEach(c=>{
+  // Atualiza só a lista de sugestões, sem render() (render recriava o campo e tirava o foco a cada letra)
+  const showDrop=()=>{
+    const qn=acNorm(nameInp.value), qd=acDig(nameInp.value);
+    const list=qn
+      ?(S.crm||[]).filter(c=>acNorm(c.name).includes(qn)||(qd.length>=3&&acDig(c.phone).includes(qd))).slice(0,8)
+      :[];
+    drop.innerHTML="";
+    if(!list.length){drop.style.display="none";return;}
+    list.forEach(c=>{
       const row=ce("div",{class:"ac-row"},
         ce("div",{},ce("div",{style:{fontWeight:600}},c.name),ce("div",{style:{fontSize:"11px",color:"#aaa"}},c.phone)),
         ce("span",{style:{fontSize:"11px",color:PINK,fontWeight:600}},`${c.orders} pedido${c.orders!==1?"s":""}`)
       );
-      row.addEventListener("mousedown",()=>{S.manualName=c.name;S.manualPhone=c.phone;S._manualAC.show=false;S._manualAC.query="";render();});
+      row.addEventListener("mousedown",e=>{
+        e.preventDefault();
+        S.manualName=c.name; S.manualPhone=c.phone;
+        nameInp.value=c.name; phoneInp.value=c.phone;
+        drop.style.display="none";
+      });
       drop.appendChild(row);
     });
-    nameWrap.appendChild(drop);
-  }
+    drop.style.display="block";
+  };
+  nameInp.addEventListener("input",e=>{S.manualName=e.target.value;showDrop();});
+  nameInp.addEventListener("focus",showDrop);
+  nameInp.addEventListener("blur",()=>setTimeout(()=>{drop.style.display="none";},150));
 
   const phoneInp=ce("input",{type:"text",class:"inp",placeholder:"Ex: 96 99999-9999"});
   phoneInp.value=S.manualPhone; phoneInp.addEventListener("input",e=>S.manualPhone=e.target.value);
@@ -1416,7 +1427,7 @@ async function saveAfiliados(msg){
   toast(ok?(msg||"✅ Afiliados salvos!"):"⚠️ Erro ao salvar na planilha.",ok?3000:4500); render();
 }
 function slugAfi(nome){
-  const base=nome.normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"").slice(0,16)||"afiliado";
+  const base=nome.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"").slice(0,16)||"afiliado";
   let c=base,n=2; while(S.afiliados.some(a=>a.codigo===c)) c=base+(n++);
   return c;
 }
