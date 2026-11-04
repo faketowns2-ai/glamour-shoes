@@ -57,6 +57,7 @@ function handleRequest(e) {
       case "checkout":    return json_(withLock_(() => createOrder_(ss, p, true)));
       case "confirm":
       case "webhook":     return json_(withLock_(() => confirmPayment_(ss, p)));
+      case "lookupClient": return json_(lookupClient_(ss, p.phone));
       case "afiliadoPainel": return json_(afiliadoPainel_(ss, p.chave));
       case "solicitarSaque": return json_(withLock_(() => solicitarSaque_(ss, p.chave)));
       case "saqueStatus": {
@@ -129,6 +130,23 @@ function phoneKey_(v) {
   return d;
 }
 function samePhone_(a, b) { const x = phoneKey_(a); return !!x && x === phoneKey_(b); }
+
+// Catálogo público: devolve só o PRIMEIRO nome do cadastro daquele celular (LGPD).
+function lookupClient_(ss, phone) {
+  const k = phoneKey_(phone);
+  if (!(k.length === 11 || k.length === 10)) return { ok: true };
+  const sh = ss.getSheetByName("CRM");
+  if (!sh) return { ok: true };
+  const rows = sh.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (!samePhone_(rows[i][2], k)) continue;
+    const full = String(rows[i][1] || "").trim();
+    if (!full || /\d/.test(full) || /^contatos?\b/i.test(full)) return { ok: true };
+    const first = full.split(/\s+/)[0];
+    return { ok: true, nome: first.charAt(0).toUpperCase() + first.slice(1).toLowerCase() };
+  }
+  return { ok: true };
+}
 
 function createOrder_(ss, p, pay) {
   const mode   = p.mode === "varejo" ? "varejo" : "atacado";
