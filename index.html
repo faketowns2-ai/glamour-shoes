@@ -74,12 +74,15 @@ function phoneKey(v){
   if(d.length===10&&/[6-9]/.test(d[2])) d=d.slice(0,2)+"9"+d.slice(2);
   return d;
 }
+function keyOk(k){return DDDS.has(k.slice(0,2))&&((k.length===11&&k[2]==="9")||(k.length===10&&/[2-5]/.test(k[2])));}
+// Valida o número como foi digitado: celular precisa dos 11 dígitos (DDD + 9 + 8 dígitos)
 function phoneValid(v){
-  const k=phoneKey(v);
-  return DDDS.has(k.slice(0,2))&&((k.length===11&&k[2]==="9")||(k.length===10&&/[2-5]/.test(k[2])));
+  let d=String(v||"").replace(/\D/g,"").replace(/^0+/,"");
+  if((d.length===12||d.length===13)&&d.startsWith("55")) d=d.slice(2);
+  return keyOk(d);
 }
 function phoneFmt(v){
-  const k=phoneKey(v); if(!phoneValid(k)) return String(v||"");
+  const k=phoneKey(v); if(!keyOk(k)) return String(v||"");
   return `(${k.slice(0,2)}) ${k.length===11?k.slice(2,7)+"-"+k.slice(7):k.slice(2,6)+"-"+k.slice(6)}`;
 }
 function samePhone(a,b){const x=phoneKey(a),y=phoneKey(b);return !!x&&x===y;}
@@ -620,15 +623,24 @@ function buildCart(){
 function buildCheckout(){
   const total=S.cart.reduce((s,i)=>s+i.price*i.qty,0);
   const nameInp=ce("input",{type:"text",class:"inp",placeholder:"Ex: Maria Souza"});
-  nameInp.value=S.cName; nameInp.addEventListener("input",e=>S.cName=e.target.value);
-  const phoneInp=phoneInput(S.cPhone,v=>S.cPhone=v);
+  nameInp.value=S.cName; nameInp.addEventListener("input",e=>{S.cName=e.target.value;S._autoName=null;});
+  // Ao completar o WhatsApp, se já houver cadastro, preenche o primeiro nome (a cliente pode alterar).
+  // O vínculo da compra é sempre pelo celular.
+  const fillName=async v=>{
+    if(!phoneValid(v)) return;
+    const k=phoneKey(v); if(S._lookKey===k) return; S._lookKey=k;
+    const d=await _call({action:"lookupClient",phone:k});
+    if(phoneKey(S.cPhone)!==k||!d.ok||!d.nome) return;
+    if(!S.cName.trim()||S.cName===S._autoName){S.cName=d.nome;S._autoName=d.nome;nameInp.value=d.nome;}
+  };
+  const phoneInp=phoneInput(S.cPhone,v=>{S.cPhone=v;fillName(v);});
   return ce("div",{},
     ce("h2",{style:{marginBottom:"18px"}},"Dados do Cliente"),
     ce("div",{class:"card",style:{maxWidth:"480px",margin:"0 auto"}},
       ce("div",{style:{marginBottom:"13px"}},
-        ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},"Nome completo"),nameInp),
-      ce("div",{style:{marginBottom:"13px"}},
         ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},"WhatsApp com DDD"),phoneInp),
+      ce("div",{style:{marginBottom:"13px"}},
+        ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},"Nome"),nameInp),
       ce("div",{style:{background:"#f7f0f5",borderRadius:"12px",padding:"13px 15px",margin:"8px 0 16px",fontSize:"13px"}},
         ce("div",{style:{fontWeight:700,marginBottom:"7px"}},"Resumo:"),
         ...S.cart.map(i=>ce("div",{style:{display:"flex",justifyContent:"space-between",marginBottom:"3px"}},
@@ -731,7 +743,7 @@ function getRef(){ const r=lsGet("gs_ref",null); return r&&r.exp>Date.now()?r.c:
 
 // Nome do cliente vinculado pelo celular (cadastro do CRM); se não houver cadastro, usa o nome digitado
 function cliName(o){
-  const c=phoneValid(o.phone)?S.crm.find(x=>samePhone(x.phone,o.phone)):null;
+  const c=keyOk(phoneKey(o.phone))?S.crm.find(x=>samePhone(x.phone,o.phone)):null;
   return (c&&String(c.name||"").trim())||o.client||"Sem nome";
 }
 function crmUpsert(order){
@@ -997,11 +1009,18 @@ function buildManual(){
     });
     drop.style.display="block";
   };
-  nameInp.addEventListener("input",e=>{S.manualName=e.target.value;showDrop();});
+  nameInp.addEventListener("input",e=>{S.manualName=e.target.value;S._mAuto=null;showDrop();});
   nameInp.addEventListener("focus",showDrop);
   nameInp.addEventListener("blur",()=>setTimeout(()=>{drop.style.display="none";},150));
 
-  const phoneInp=phoneInput(S.manualPhone,v=>S.manualPhone=v);
+  const phoneInp=phoneInput(S.manualPhone,v=>{
+    S.manualPhone=v;
+    if(!phoneValid(v)) return;
+    const c=S.crm.find(x=>samePhone(x.phone,v));
+    if(c&&String(c.name||"").trim()&&(!S.manualName.trim()||S.manualName===S._mAuto)){
+      S.manualName=c.name; S._mAuto=c.name; nameInp.value=c.name; drop.style.display="none";
+    }
+  });
   const manTotal=S.manualCart.reduce((s,i)=>s+i.price*i.qty,0);
 
   const prodCards=S.products.map(p=>{
@@ -1076,12 +1095,12 @@ function buildManual(){
     ce("h3",{style:{marginBottom:"16px",fontSize:"17px"}},"🧾 Pedido Manual (Loja Física)"),
     ce("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginBottom:"18px"}},
       ce("div",{},
+        ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},"WhatsApp com DDD (opcional)"),
+        phoneInp),
+      ce("div",{},
         ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},
           "Nome do cliente ",ce("span",{style:{fontSize:"11px",color:PINK,fontWeight:400}},"(busque ou digite)")),
-        nameWrap),
-      ce("div",{},
-        ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},"WhatsApp com DDD (opcional)"),
-        phoneInp)),
+        nameWrap)),
     ce("h4",{style:{marginBottom:"12px",fontSize:"14px",color:"#555"}},"Selecione os produtos:"),
     ce("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:"14px",marginBottom:"22px"}},...prodCards),
     cartSection
