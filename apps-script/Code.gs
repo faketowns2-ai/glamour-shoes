@@ -141,7 +141,7 @@ function lookupClient_(ss, phone) {
   for (let i = 1; i < rows.length; i++) {
     if (!samePhone_(rows[i][2], k)) continue;
     const full = String(rows[i][1] || "").trim();
-    if (!full || /\d/.test(full) || /^contatos?\b/i.test(full)) return { ok: true };
+    if (!full || /\d/.test(full) || /^contatos?\b/i.test(full)) continue; // nome provisório: tenta outro cadastro do mesmo número
     const first = full.split(/\s+/)[0];
     return { ok: true, nome: first.charAt(0).toUpperCase() + first.slice(1).toLowerCase() };
   }
@@ -176,7 +176,8 @@ function createOrder_(ss, p, pay) {
 
   const afis = loadAfiliados(ss);
   const refCode = String(p.ref || "").toLowerCase();
-  const afi = afis.find(a => a.codigo === refCode && a.ativo);
+  // comissão de afiliado só vale para vendas do varejo
+  const afi = mode === "varejo" ? afis.find(a => a.codigo === refCode && a.ativo) : null;
 
   const now = new Date();
   const order = {
