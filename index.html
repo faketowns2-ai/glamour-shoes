@@ -65,6 +65,48 @@ const lsGet  = (k,d) => { try{ const v=localStorage.getItem(k); return v?JSON.pa
 const lsSet  = (k,v) => { try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} };
 
 // normaliza data para YYYY-MM-DD
+// ─── TELEFONE (padrão Brasil: DDD + número) ─────────────────────────────────
+const DDDS=new Set("11 12 13 14 15 16 17 18 19 21 22 24 27 28 31 32 33 34 35 37 38 41 42 43 44 45 46 47 48 49 51 53 54 55 61 62 63 64 65 66 67 68 69 71 73 74 75 77 79 81 82 83 84 85 86 87 88 89 91 92 93 94 95 96 97 98 99".split(" "));
+// Chave canônica: só dígitos, DDD + número (sem 55, sem 0 na frente). Celular antigo de 8 dígitos ganha o 9.
+function phoneKey(v){
+  let d=String(v||"").replace(/\D/g,"").replace(/^0+/,"");
+  if((d.length===12||d.length===13)&&d.startsWith("55")) d=d.slice(2);
+  if(d.length===10&&/[6-9]/.test(d[2])) d=d.slice(0,2)+"9"+d.slice(2);
+  return d;
+}
+function phoneValid(v){
+  const k=phoneKey(v);
+  return DDDS.has(k.slice(0,2))&&((k.length===11&&k[2]==="9")||(k.length===10&&/[2-5]/.test(k[2])));
+}
+function phoneFmt(v){
+  const k=phoneKey(v); if(!phoneValid(k)) return String(v||"");
+  return `(${k.slice(0,2)}) ${k.length===11?k.slice(2,7)+"-"+k.slice(7):k.slice(2,6)+"-"+k.slice(6)}`;
+}
+function samePhone(a,b){const x=phoneKey(a),y=phoneKey(b);return !!x&&x===y;}
+const PHONE_MSG="Informe o WhatsApp com DDD. Ex: (96) 99999-9999";
+// Campo de telefone com máscara (96) 99999-9999
+function phoneInput(value,onChange,ph="(96) 99999-9999"){
+  const i=ce("input",{type:"tel",inputmode:"numeric",class:"inp",autocomplete:"tel",placeholder:ph,maxlength:"16"});
+  const mask=v=>{
+    let d=String(v||"").replace(/\D/g,"");
+    if(d.length>11&&d.startsWith("55")) d=d.slice(2);
+    d=d.slice(0,11);
+    if(!d) return "";
+    if(d.length<=2) return "("+d;
+    const r=d.slice(2), cut=r.length>8?5:4;
+    return `(${d.slice(0,2)}) `+(r.length>4?r.slice(0,cut)+"-"+r.slice(cut):r);
+  };
+  i.value=phoneValid(value)?phoneFmt(value):mask(value);
+  i.addEventListener("input",e=>{
+    const atEnd=i.selectionStart===i.value.length;
+    if(atEnd&&!(e.inputType||"").startsWith("delete")) i.value=mask(i.value);
+    onChange(i.value);
+  });
+  i.addEventListener("blur",()=>{ if(i.value) i.value=phoneValid(i.value)?phoneFmt(i.value):mask(i.value); onChange(i.value);
+    i.style.borderColor=i.value&&!phoneValid(i.value)?"#e53935":""; });
+  return i;
+}
+
 function ymdLocal(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
 function monthRange(ym){const [y,m]=ym.split("-").map(Number);return {from:`${ym}-01`,to:ymdLocal(new Date(y,m,0))};}
 function curMonth(){return ymdLocal(new Date()).slice(0,7);}
@@ -221,7 +263,7 @@ async function loadFromSheets(force=false){
         }
         if(data.crm&&data.crm.length>0){
           data.crm.forEach(rc=>{
-            const lc=S.crm.find(c=>c.phone===rc.phone);
+            const lc=S.crm.find(c=>samePhone(c.phone,rc.phone));
             if(!lc) S.crm.push(rc);
             else if(rc.orders>lc.orders) Object.assign(lc,rc);
           });
@@ -579,15 +621,14 @@ function buildCheckout(){
   const total=S.cart.reduce((s,i)=>s+i.price*i.qty,0);
   const nameInp=ce("input",{type:"text",class:"inp",placeholder:"Ex: Maria Souza"});
   nameInp.value=S.cName; nameInp.addEventListener("input",e=>S.cName=e.target.value);
-  const phoneInp=ce("input",{type:"text",class:"inp",placeholder:"Ex: 96 99999-9999"});
-  phoneInp.value=S.cPhone; phoneInp.addEventListener("input",e=>S.cPhone=e.target.value);
+  const phoneInp=phoneInput(S.cPhone,v=>S.cPhone=v);
   return ce("div",{},
     ce("h2",{style:{marginBottom:"18px"}},"Dados do Cliente"),
     ce("div",{class:"card",style:{maxWidth:"480px",margin:"0 auto"}},
       ce("div",{style:{marginBottom:"13px"}},
         ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},"Nome completo"),nameInp),
       ce("div",{style:{marginBottom:"13px"}},
-        ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},"WhatsApp"),phoneInp),
+        ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},"WhatsApp com DDD"),phoneInp),
       ce("div",{style:{background:"#f7f0f5",borderRadius:"12px",padding:"13px 15px",margin:"8px 0 16px",fontSize:"13px"}},
         ce("div",{style:{fontWeight:700,marginBottom:"7px"}},"Resumo:"),
         ...S.cart.map(i=>ce("div",{style:{display:"flex",justifyContent:"space-between",marginBottom:"3px"}},
@@ -606,12 +647,12 @@ function buildCheckout(){
 }
 
 function cartPayload(){
-  return {mode:VAREJO?"varejo":"atacado",client:S.cName.trim(),phone:S.cPhone.trim(),ref:getRef(),
+  return {mode:VAREJO?"varejo":"atacado",client:S.cName.trim(),phone:phoneKey(S.cPhone),ref:getRef(),
           items:S.cart.map(i=>({pid:i.pid,size:i.size,qty:i.qty}))};
 }
 async function doFinalize(){
   if(!S.cName.trim()) return toast("Informe o nome!");
-  if(!S.cPhone.trim()) return toast("Informe o WhatsApp!");
+  if(!phoneValid(S.cPhone)) return toast(PHONE_MSG,4000);
   if(S.busy) return; S.busy=true; render();
   const d=await _call({action:"createOrder",...cartPayload()});
   S.busy=false;
@@ -619,7 +660,7 @@ async function doFinalize(){
   const total=d.ok?d.total:S.cart.reduce((s,i)=>s+i.price*i.qty,0);
   const lines=S.cart.map(i=>`• ${i.name} | Nº ${i.size} | Qtd: ${i.qty} | ${fmt(i.price*i.qty)}`).join("\n");
   const ref=getRef();
-  const msg=`*Pedido Glamour❤️Shoes${VAREJO?" (VAREJO)":" (ATACADO)"}*${d.ok?` #${d.id}`:""}\n\nCliente: ${S.cName}\nWhatsApp: ${S.cPhone}${ref?`\nIndicação: ${ref}`:""}\n\n${lines}\n\n*Total: ${fmt(total)}*`;
+  const msg=`*Pedido Glamour❤️Shoes${VAREJO?" (VAREJO)":" (ATACADO)"}*${d.ok?` #${d.id}`:""}\n\nCliente: ${S.cName}\nWhatsApp: ${phoneFmt(S.cPhone)}${ref?`\nIndicação: ${ref}`:""}\n\n${lines}\n\n*Total: ${fmt(total)}*`;
   S.cart=[]; S.cName=""; S.cPhone="";
   toast("Pedido enviado! Aguardando confirmação."); go("catalog");
   location.href=`https://wa.me/${WA}?text=${encodeURIComponent(msg)}`;
@@ -627,11 +668,11 @@ async function doFinalize(){
 
 async function doPay(){
   if(!S.cName.trim()) return toast("Informe o nome!");
-  if(S.cPhone.replace(/\D/g,"").length<10) return toast("Informe o WhatsApp com DDD!");
+  if(!phoneValid(S.cPhone)) return toast(PHONE_MSG,4000);
   if(S.busy) return; S.busy=true; render();
   const d=await _call({action:"checkout",...cartPayload()});
   if(!d.ok||!d.url){ S.busy=false; render(); return toast(d.error||"Não foi possível gerar o pagamento.",4500); }
-  lsSet("gs_lastorder",{id:d.id,total:d.total,client:S.cName,phone:S.cPhone,
+  lsSet("gs_lastorder",{id:d.id,total:d.total,client:S.cName,phone:phoneKey(S.cPhone),
     items:S.cart.map(i=>({name:i.name,size:i.size,qty:i.qty,price:i.price}))});
   location.href=d.url;
 }
@@ -689,7 +730,7 @@ function captureRef(){
 function getRef(){ const r=lsGet("gs_ref",null); return r&&r.exp>Date.now()?r.c:""; }
 
 function crmUpsert(order){
-  const ex=S.crm.find(c=>c.phone===order.phone);
+  const ex=S.crm.find(c=>samePhone(c.phone,order.phone));
   if(ex){ ex.name=order.client; ex.pending=(ex.pending||0)+1; ex.lastOrder=order.date; }
   else S.crm.push({id:Date.now()+Math.random(),name:order.client,phone:order.phone,
                    orders:0,pending:1,lastOrder:order.date,since:order.date});
@@ -772,7 +813,7 @@ function buildOrders(){
           ce("div",{style:{flex:1}},
             ce("div",{style:{fontWeight:700,fontSize:"14px"}},
               o.client," ",
-              ce("span",{style:{fontSize:"12px",color:"#888",fontWeight:400}},`• ${o.phone}`),
+              ce("span",{style:{fontSize:"12px",color:"#888",fontWeight:400}},`• ${phoneFmt(o.phone)}`),
               o.origin==="manual"?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#e3f2fd",
                 color:"#1565c0",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"Loja"):null,
               o.origin==="varejo"?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#fff3e0",
@@ -902,7 +943,7 @@ async function confirmOrder(id){
   });
   o.status="confirmed";
   if(o.ref&&!o.comissao){ const a=S.afiliados.find(x=>x.codigo===o.ref); if(a) o.comissao=Math.round(o.total*(+a.comissao||0))/100; }
-  const c=S.crm.find(x=>x.phone===o.phone);
+  const c=S.crm.find(x=>samePhone(x.phone,o.phone));
   if(c){c.orders=(c.orders||0)+1;c.pending=Math.max(0,(c.pending||1)-1);c.lastOrder=o.date;}
   lsSet("gs_prod",S.products); lsSet("gs_ord",S.orders); lsSet("gs_crm",S.crm);
   render();
@@ -935,13 +976,13 @@ function buildManual(){
     if(!list.length){drop.style.display="none";return;}
     list.forEach(c=>{
       const row=ce("div",{class:"ac-row"},
-        ce("div",{},ce("div",{style:{fontWeight:600}},c.name),ce("div",{style:{fontSize:"11px",color:"#aaa"}},c.phone)),
+        ce("div",{},ce("div",{style:{fontWeight:600}},c.name),ce("div",{style:{fontSize:"11px",color:"#aaa"}},phoneFmt(c.phone))),
         ce("span",{style:{fontSize:"11px",color:PINK,fontWeight:600}},`${c.orders} pedido${c.orders!==1?"s":""}`)
       );
       row.addEventListener("mousedown",e=>{
         e.preventDefault();
         S.manualName=c.name; S.manualPhone=c.phone;
-        nameInp.value=c.name; phoneInp.value=c.phone;
+        nameInp.value=c.name; phoneInp.value=phoneFmt(c.phone); phoneInp.style.borderColor=phoneValid(c.phone)?"":"#e53935";
         drop.style.display="none";
       });
       drop.appendChild(row);
@@ -952,8 +993,7 @@ function buildManual(){
   nameInp.addEventListener("focus",showDrop);
   nameInp.addEventListener("blur",()=>setTimeout(()=>{drop.style.display="none";},150));
 
-  const phoneInp=ce("input",{type:"text",class:"inp",placeholder:"Ex: 96 99999-9999"});
-  phoneInp.value=S.manualPhone; phoneInp.addEventListener("input",e=>S.manualPhone=e.target.value);
+  const phoneInp=phoneInput(S.manualPhone,v=>S.manualPhone=v);
   const manTotal=S.manualCart.reduce((s,i)=>s+i.price*i.qty,0);
 
   const prodCards=S.products.map(p=>{
@@ -1014,8 +1054,9 @@ function buildManual(){
       onclick:()=>{
         if(!S.manualCart.length) return toast("Carrinho vazio!");
         if(!S.manualName.trim()) return toast("Informe o nome!");
+        if(S.manualPhone.trim()&&!phoneValid(S.manualPhone)) return toast(PHONE_MSG,4000);
         const order={id:Date.now(),date:toDay(),dateStr:nowStr(),client:S.manualName,
-                     phone:S.manualPhone||"Loja física",items:S.manualCart.map(i=>({...i})),
+                     phone:S.manualPhone.trim()?phoneKey(S.manualPhone):"Loja física",items:S.manualCart.map(i=>({...i})),
                      total:manTotal,status:"pending",origin:"manual"};
         S.orders.unshift(order); crmUpsert(order);
         persistOrders(); persistCRM();
@@ -1031,7 +1072,7 @@ function buildManual(){
           "Nome do cliente ",ce("span",{style:{fontSize:"11px",color:PINK,fontWeight:400}},"(busque ou digite)")),
         nameWrap),
       ce("div",{},
-        ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},"WhatsApp (opcional)"),
+        ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},"WhatsApp com DDD (opcional)"),
         phoneInp)),
     ce("h4",{style:{marginBottom:"12px",fontSize:"14px",color:"#555"}},"Selecione os produtos:"),
     ce("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:"14px",marginBottom:"22px"}},...prodCards),
@@ -1066,7 +1107,7 @@ function buildCRM(){
               ce("div",{style:{fontWeight:700,fontSize:"15px"}},c.name),
               c.orders>=3?ce("span",{class:"badge",style:{background:"#fff8e1",color:"#f57f17"}},"⭐ VIP"):null,
               isInact?ce("span",{class:"badge",style:{background:"#fce4ec",color:"#c62828"}},"⚠️ Inativo"):null),
-            ce("div",{style:{fontSize:"13px",color:"#888",marginBottom:"4px"}},`📱 ${c.phone}`),
+            ce("div",{style:{fontSize:"13px",color:"#888",marginBottom:"4px"}},`📱 ${phoneFmt(c.phone)}`),
             ce("div",{style:{fontSize:"12px",color:"#aaa"}},`${c.orders} pedido${c.orders!==1?"s":""} • Último: ${c.lastOrder}`)),
           ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap"}},
             ce("button",{style:{padding:"5px 12px",borderRadius:"18px",border:`1.5px solid ${PINK}`,
@@ -1081,12 +1122,12 @@ function buildCRM(){
 }
 
 function openCRMDetail(c){
-  const clientOrders=S.orders.filter(o=>o.phone===c.phone);
+  const clientOrders=S.orders.filter(o=>samePhone(o.phone,c.phone));
   const spent=clientOrders.filter(o=>o.status==="confirmed").reduce((s,o)=>s+o.total,0);
   openModal(ce("div",{},
     ce("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}},
       ce("div",{},ce("div",{style:{fontWeight:800,fontSize:"16px"}},c.name),
-        ce("div",{style:{fontSize:"13px",color:"#888"}},`📱 ${c.phone}`)),
+        ce("div",{style:{fontSize:"13px",color:"#888"}},`📱 ${phoneFmt(c.phone)}`)),
       ce("button",{style:{background:"none",border:"none",fontSize:"22px",color:"#ccc"},onclick:closeModal},"✕")),
     ce("div",{style:{display:"flex",gap:"10px",marginBottom:"16px"}},
       ce("div",{style:{flex:1,background:"#f7f0f5",borderRadius:"12px",padding:"10px 14px",textAlign:"center"}},
@@ -1120,13 +1161,13 @@ function openMsgModal(client,tpl){
   ta.addEventListener("input",e=>txt=e.target.value);
   openModal(ce("div",{},
     ce("div",{style:{fontWeight:700,fontSize:"15px",marginBottom:"3px"}},`${tpl.icon} ${tpl.label}`),
-    ce("div",{style:{fontSize:"12px",color:"#888",marginBottom:"12px"}},`Para: ${client.name} (${client.phone})`),
+    ce("div",{style:{fontSize:"12px",color:"#888",marginBottom:"12px"}},`Para: ${client.name} (${phoneFmt(client.phone)})`),
     ta,
     ce("div",{style:{fontSize:"11px",color:"#aaa",marginBottom:"14px"}},"Edite a mensagem antes de enviar."),
     ce("div",{style:{display:"flex",gap:"10px"}},
       ce("button",{class:"btn",style:{flex:1,padding:"11px 0",borderRadius:"28px",background:"#25d366",color:"#fff",fontSize:"14px"},
         onclick:()=>{
-          window.open(`https://wa.me/55${client.phone.replace(/\D/g,"")}?text=${encodeURIComponent(ta.value)}`,"_blank");
+          window.open(`https://wa.me/55${phoneKey(client.phone)}?text=${encodeURIComponent(ta.value)}`,"_blank");
           closeModal(); toast("WhatsApp aberto!");
         }},"📲 Enviar no WhatsApp"),
       ce("button",{class:"btn",style:{padding:"11px 18px",borderRadius:"24px",background:"#eee",color:"#1a1a2e"},onclick:closeModal},"Cancelar")
@@ -1182,7 +1223,7 @@ function buildDash(){
   // Top 10 compradores no período
   const byCli={};
   conf.forEach(o=>{
-    const k=String(o.phone||"").replace(/\D/g,"")||String(o.client||"").trim().toLowerCase()||"sem-nome";
+    const k=phoneKey(o.phone)||String(o.client||"").trim().toLowerCase()||"sem-nome";
     if(!byCli[k]) byCli[k]={name:o.client||"Sem nome",phone:o.phone||"",n:0,rev:0,prf:0};
     byCli[k].n++; byCli[k].rev+=o.total; byCli[k].prf+=o.total-ordCost(o);
   });
@@ -1514,13 +1555,15 @@ function buildAfiliados(){
       ce("div",{style:{fontWeight:700,fontSize:"14px",marginBottom:"10px"}},"Novo afiliado"),
       ce("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:"10px"}},
         inp("afi-nome","Nome","nome","Ex: Ana Paula"),
-        inp("afi-wa","WhatsApp","whatsapp","96 99999-9999"),
+        ce("div",{},ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",marginBottom:"4px"}},"WhatsApp com DDD"),
+          phoneInput(f.whatsapp,v=>S.afiForm.whatsapp=v)),
         inp("afi-pix","Chave Pix","pix","CPF, e-mail ou telefone"),
         inp("afi-com","Comissão (%)","comissao","10","number")),
       ce("button",{class:"btn",style:{marginTop:"12px",background:PINK,color:"#fff"},onclick:()=>{
         if(!f.nome.trim()) return toast("Informe o nome do afiliado!");
+        if(f.whatsapp.trim()&&!phoneValid(f.whatsapp)) return toast(PHONE_MSG,4000);
         const pct=+f.comissao; if(!(pct>0&&pct<=50)) return toast("Comissão entre 1% e 50%.");
-        S.afiliados.push({codigo:slugAfi(f.nome),nome:f.nome.trim(),whatsapp:f.whatsapp.trim(),pix:f.pix.trim(),comissao:pct,ativo:true,criado:toDay()});
+        S.afiliados.push({codigo:slugAfi(f.nome),nome:f.nome.trim(),whatsapp:f.whatsapp.trim()?phoneKey(f.whatsapp):"",pix:f.pix.trim(),comissao:pct,ativo:true,criado:toDay()});
         S.afiForm=null; saveAfiliados("✅ Afiliado cadastrado!");
       }},"Cadastrar afiliado")),
     S.afiliados.length===0?ce("div",{style:{color:"#aaa",textAlign:"center",padding:"30px 0"}},"Nenhum afiliado cadastrado ainda."):null,
@@ -1533,7 +1576,7 @@ function buildAfiliados(){
             ce("div",{style:{fontWeight:700,fontSize:"14px"}},a.nome,
               ce("span",{style:{marginLeft:"8px",fontSize:"11px",color:"#888",fontWeight:400}},`${a.comissao}% • código ${a.codigo}`),
               a.ativo?null:ce("span",{style:{marginLeft:"6px",fontSize:"10px",background:"#555",color:"#fff",borderRadius:"10px",padding:"2px 8px"}},"INATIVO")),
-            ce("div",{style:{fontSize:"12px",color:"#888",marginTop:"2px"}},`${a.whatsapp||"sem WhatsApp"} • Pix: ${a.pix||"não informado"}`),
+            ce("div",{style:{fontSize:"12px",color:"#888",marginTop:"2px"}},`${a.whatsapp?phoneFmt(a.whatsapp):"sem WhatsApp"} • Pix: ${a.pix||"não informado"}`),
             ce("div",{style:{fontSize:"12px",marginTop:"8px",wordBreak:"break-all",color:"#1565c0"}},link)),
           ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap"}},
             ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:"#e3f2fd",color:"#1565c0"},onclick:async()=>{
