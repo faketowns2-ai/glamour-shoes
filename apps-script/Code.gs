@@ -121,12 +121,21 @@ function revokeToken_(token) {
 }
 
 // ── PEDIDO DO CATÁLOGO (preços e estoque conferidos aqui, nunca no site) ─────
+// Telefone canônico: DDD + número, só dígitos (sem 55 e sem 0 na frente)
+function phoneKey_(v) {
+  let d = String(v || "").replace(/\D/g, "").replace(/^0+/, "");
+  if ((d.length === 12 || d.length === 13) && d.indexOf("55") === 0) d = d.slice(2);
+  if (d.length === 10 && /[6-9]/.test(d.charAt(2))) d = d.slice(0, 2) + "9" + d.slice(2);
+  return d;
+}
+function samePhone_(a, b) { const x = phoneKey_(a); return !!x && x === phoneKey_(b); }
+
 function createOrder_(ss, p, pay) {
   const mode   = p.mode === "varejo" ? "varejo" : "atacado";
   const client = String(p.client || "").trim().slice(0, 80);
-  const phone  = String(p.phone  || "").trim().slice(0, 30);
+  const phone  = phoneKey_(p.phone);
   if (!client) return { ok: false, error: "Informe o nome!" };
-  if (phone.replace(/\D/g, "").length < 10) return { ok: false, error: "Informe o WhatsApp com DDD!" };
+  if (!(phone.length === 11 || phone.length === 10)) return { ok: false, error: "Informe o WhatsApp com DDD!" };
   const reqItems = Array.isArray(p.items) ? p.items : [];
   if (!reqItems.length || reqItems.length > 40) return { ok: false, error: "Carrinho vazio." };
 
@@ -234,7 +243,7 @@ function confirmPayment_(ss, p) {
   const crm = ss.getSheetByName("CRM");
   if (crm) {
     const cr = crm.getDataRange().getValues();
-    for (let i = 1; i < cr.length; i++) if (String(cr[i][2]) === order.phone) {
+    for (let i = 1; i < cr.length; i++) if (samePhone_(cr[i][2], order.phone)) {
       crm.getRange(i + 1, 4, 1, 2).setValues([[Number(cr[i][3] || 0) + 1, Math.max(0, Number(cr[i][4] || 1) - 1)]]);
       break;
     }
@@ -433,8 +442,9 @@ function upsertCRM_(ss, order) {
   if (!sh) { writeAll_(ss, "CRM", H_CRM, []); sh = ss.getSheetByName("CRM"); }
   const rows = sh.getDataRange().getValues();
   for (let i = 1; i < rows.length; i++) {
-    if (String(rows[i][2]) === order.phone) {
-      sh.getRange(i + 1, 2).setValue(order.client);
+    if (samePhone_(rows[i][2], order.phone)) {
+      // Vínculo pelo celular: mantém o nome do cadastro (só preenche se estiver vazio)
+      if (!String(rows[i][1] || "").trim()) sh.getRange(i + 1, 2).setValue(order.client);
       sh.getRange(i + 1, 5, 1, 2).setValues([[Number(rows[i][4] || 0) + 1, order.date]]);
       return;
     }
@@ -444,8 +454,8 @@ function upsertCRM_(ss, order) {
 function saveCRM(ss, crm) {
   const server = loadCRM(ss);
   const phones = {};
-  crm.forEach(c => { phones[String(c.phone)] = true; });
-  const all = crm.concat(server.filter(c => !phones[String(c.phone)]));
+  crm.forEach(c => { phones[phoneKey_(c.phone) || String(c.phone)] = true; });
+  const all = crm.concat(server.filter(c => !phones[phoneKey_(c.phone) || String(c.phone)]));
   writeAll_(ss, "CRM", H_CRM, all.map(c => [
     c.id || "", c.name || "", c.phone || "", Number(c.orders || 0), Number(c.pending || 0), c.lastOrder || "", c.since || ""
   ]));
