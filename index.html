@@ -729,9 +729,15 @@ function captureRef(){
 }
 function getRef(){ const r=lsGet("gs_ref",null); return r&&r.exp>Date.now()?r.c:""; }
 
+// Nome do cliente vinculado pelo celular (cadastro do CRM); se não houver cadastro, usa o nome digitado
+function cliName(o){
+  const c=phoneValid(o.phone)?S.crm.find(x=>samePhone(x.phone,o.phone)):null;
+  return (c&&String(c.name||"").trim())||o.client||"Sem nome";
+}
 function crmUpsert(order){
   const ex=S.crm.find(c=>samePhone(c.phone,order.phone));
-  if(ex){ ex.name=order.client; ex.pending=(ex.pending||0)+1; ex.lastOrder=order.date; }
+  // Vínculo pelo celular: o nome do cadastro é mantido, mesmo que o cliente digite o nome diferente
+  if(ex){ if(!String(ex.name||"").trim()) ex.name=order.client; ex.pending=(ex.pending||0)+1; ex.lastOrder=order.date; }
   else S.crm.push({id:Date.now()+Math.random(),name:order.client,phone:order.phone,
                    orders:0,pending:1,lastOrder:order.date,since:order.date});
 }
@@ -812,7 +818,9 @@ function buildOrders(){
         ce("div",{style:{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px"}},
           ce("div",{style:{flex:1}},
             ce("div",{style:{fontWeight:700,fontSize:"14px"}},
-              o.client," ",
+              cliName(o)," ",
+              cliName(o).trim().toLowerCase()!==String(o.client||"").trim().toLowerCase()
+                ?ce("span",{style:{fontSize:"11px",color:"#aaa",fontWeight:400}},`(digitou: ${o.client}) `):null,
               ce("span",{style:{fontSize:"12px",color:"#888",fontWeight:400}},`• ${phoneFmt(o.phone)}`),
               o.origin==="manual"?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#e3f2fd",
                 color:"#1565c0",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"Loja"):null,
@@ -1224,7 +1232,7 @@ function buildDash(){
   const byCli={};
   conf.forEach(o=>{
     const k=phoneKey(o.phone)||String(o.client||"").trim().toLowerCase()||"sem-nome";
-    if(!byCli[k]) byCli[k]={name:o.client||"Sem nome",phone:o.phone||"",n:0,rev:0,prf:0};
+    if(!byCli[k]) byCli[k]={name:cliName(o),phone:o.phone||"",n:0,rev:0,prf:0};
     byCli[k].n++; byCli[k].rev+=o.total; byCli[k].prf+=o.total-ordCost(o);
   });
   const topCli=Object.values(byCli).sort((a,b)=>b.rev-a.rev).slice(0,10);
