@@ -848,6 +848,7 @@ function buildOrders(){
             isEditing?buildOrderEditor(o):ce("div",{},
               ...o.items.map(i=>ce("div",{style:{fontSize:"13px",color:"#555",marginBottom:"2px"}},
                 `• ${i.name} | Nº ${i.size} | Qtd: ${i.qty} | ${fmt(i.price*i.qty)}`)),
+              (+o.desconto>0)?ce("div",{style:{fontSize:"12px",color:"#2e7d32",fontWeight:600,marginTop:"6px"}},`Desconto: - ${fmt(+o.desconto)}`):null,
               ce("div",{style:{fontWeight:800,color:PINK,marginTop:"6px"}},`Total: ${fmt(o.total)}`),
               o.pago&&o.pagamento&&o.pagamento.receipt_url?ce("a",{href:o.pagamento.receipt_url,target:"_blank",
                 style:{fontSize:"12px",color:"#1565c0"}},`Ver comprovante (${o.pagamento.metodo||"pagamento"})`):null
@@ -939,7 +940,7 @@ function buildOrderEditor(o){
         ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#4caf50",color:"#fff"},
           onclick:()=>{
             if(!draft.items.length) return toast("O pedido não pode ficar vazio!");
-            o.items=[...draft.items]; o.total=draftTotal;
+            o.items=[...draft.items]; o.total=Math.max(0,Math.round((draftTotal-(+o.desconto||0))*100)/100);
             S._editingOrder=null; delete S._orderEdits[o.id]; delete S._addItem[o.id];
             persistOrders(); toast("✅ Pedido atualizado!"); render();
           }},"💾 Salvar")
@@ -1021,7 +1022,14 @@ function buildManual(){
       S.manualName=c.name; S._mAuto=c.name; nameInp.value=c.name; drop.style.display="none";
     }
   });
-  const manTotal=S.manualCart.reduce((s,i)=>s+i.price*i.qty,0);
+  const manSub=S.manualCart.reduce((s,i)=>s+i.price*i.qty,0);
+  // Desconto manual: valor em R$ ou em %, nunca maior que o subtotal
+  const manCalc=()=>{
+    const v=Math.max(0,parseFloat(String(S.manualDesc||"").replace(",","."))||0);
+    const d=Math.min(manSub,Math.round((S.manualDescTipo==="%"?manSub*Math.min(v,100)/100:v)*100)/100);
+    return {sub:manSub,d,t:Math.round((manSub-d)*100)/100};
+  };
+  const manTotal=manCalc().t;
 
   const prodCards=S.products.map(p=>{
     const sz=S.manualSz[p.id]||""; const qty=S.manualQty[p.id]||1;
@@ -1074,9 +1082,30 @@ function buildManual(){
         ce("span",{style:{fontWeight:700,color:PINK}},fmt(item.price*item.qty)),
         ce("button",{style:{background:"none",border:"none",color:"#ccc",fontSize:"15px"},
           onclick:()=>{S.manualCart=S.manualCart.filter(i=>i.key!==item.key);render();}},"✕")))),
-    ce("div",{style:{borderTop:"1px solid #eee",marginTop:"10px",paddingTop:"10px",
-      display:"flex",justifyContent:"space-between",fontWeight:800,fontSize:"16px",color:PINK}},
-      ce("span",{},"Total"),ce("span",{},fmt(manTotal))),
+    (()=>{
+      const tipo=S.manualDescTipo==="%"?"%":"R$";
+      const r0=manCalc();
+      const dSpan=ce("span",{},"- "+fmt(r0.d));
+      const tSpan=ce("span",{},fmt(r0.t));
+      const dInp=ce("input",{type:"text",inputmode:"decimal",class:"inp",autocomplete:"off",placeholder:"0",
+        style:{width:"90px",textAlign:"right",padding:"7px 9px",margin:"0"}});
+      dInp.value=S.manualDesc||"";
+      // Atualiza os valores na hora, sem render() (para não perder o foco do campo)
+      dInp.addEventListener("input",()=>{S.manualDesc=dInp.value;const r=manCalc();dSpan.textContent="- "+fmt(r.d);tSpan.textContent=fmt(r.t);});
+      const tBtn=x=>ce("button",{class:"btn",style:{padding:"6px 11px",borderRadius:"8px",fontSize:"12px",
+        background:tipo===x?PINK:"#eee",color:tipo===x?"#fff":"#555"},
+        onclick:()=>{S.manualDescTipo=x;render();}},x);
+      return ce("div",{style:{borderTop:"1px solid #eee",marginTop:"10px",paddingTop:"10px"}},
+        ce("div",{style:{display:"flex",justifyContent:"space-between",fontSize:"13px",color:"#555",marginBottom:"8px"}},
+          ce("span",{},"Subtotal"),ce("span",{},fmt(r0.sub))),
+        ce("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",marginBottom:"8px"}},
+          ce("span",{style:{fontSize:"13px",color:"#555"}},"Desconto"),
+          ce("div",{style:{display:"flex",alignItems:"center",gap:"6px"}},tBtn("R$"),tBtn("%"),dInp)),
+        ce("div",{style:{display:"flex",justifyContent:"space-between",fontSize:"13px",color:"#2e7d32",fontWeight:600,marginBottom:"8px"}},
+          ce("span",{},"Desconto aplicado"),dSpan),
+        ce("div",{style:{display:"flex",justifyContent:"space-between",fontWeight:800,fontSize:"16px",color:PINK}},
+          ce("span",{},"Total"),tSpan));
+    })(),
     ce("button",{class:"btn",style:{width:"100%",marginTop:"14px",padding:"12px 0",borderRadius:"30px",background:PINK,color:"#fff",fontSize:"14px"},
       onclick:()=>{
         if(!S.manualCart.length) return toast("Carrinho vazio!");
@@ -1084,10 +1113,10 @@ function buildManual(){
         if(S.manualPhone.trim()&&!phoneValid(S.manualPhone)) return toast(PHONE_MSG,4000);
         const order={id:Date.now(),date:toDay(),dateStr:nowStr(),client:S.manualName,
                      phone:S.manualPhone.trim()?phoneKey(S.manualPhone):"Loja física",items:S.manualCart.map(i=>({...i})),
-                     total:manTotal,status:"pending",origin:"manual"};
+                     total:manCalc().t,subtotal:manCalc().sub,desconto:manCalc().d,status:"pending",origin:"manual"};
         S.orders.unshift(order); crmUpsert(order);
         persistOrders(); persistCRM();
-        S.manualCart=[]; S.manualName=""; S.manualPhone=""; S.manualSz={}; S.manualQty={};
+        S.manualCart=[]; S.manualName=""; S.manualPhone=""; S.manualSz={}; S.manualQty={}; S.manualDesc=""; S.manualDescTipo="R$";
         S.adminTab="orders"; toast("Pedido registrado!"); render();
       }},"✅ Registrar Pedido")):null;
 
