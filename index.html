@@ -59,7 +59,7 @@ const DEMO = [
 // UTILS
 // ═══════════════════════════════════════════════════════════════════════════
 const fmt    = v  => Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
-const toDay  = () => new Date().toISOString().slice(0,10);
+const toDay  = () => ymdLocal(new Date()); // data local (Macapá), não UTC
 const nowStr = () => new Date().toLocaleString("pt-BR");
 const lsGet  = (k,d) => { try{ const v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){return d;} };
 const lsSet  = (k,v) => { try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} };
@@ -1313,7 +1313,10 @@ function buildDash(){
       ce("label",{style:{fontSize:"13px",fontWeight:600,display:"flex",alignItems:"center",gap:"6px"}},"De:",dFromInp),
       ce("label",{style:{fontSize:"13px",fontWeight:600,display:"flex",alignItems:"center",gap:"6px"}},"Até:",dToInp),
       ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#eee",color:"#1a1a2e"},
-        onclick:()=>{const r=monthRange(curMonth());S.dFrom=r.from;S.dTo=r.to;render();}},"Mês atual")),
+        onclick:()=>{const r=monthRange(curMonth());S.dFrom=r.from;S.dTo=r.to;render();}},"Mês atual"),
+      (()=>{const hj=ymdLocal(new Date());const on=S.dFrom===hj&&S.dTo===hj;
+        return ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:on?PINK:"#eee",color:on?"#fff":"#1a1a2e"},
+          onclick:()=>{S.dFrom=hj;S.dTo=hj;render();}},"Hoje");})()),
     ce("div",{class:"card",style:{marginBottom:"18px",background:"linear-gradient(135deg,#fff0f6,#fff)",border:`1px solid ${PINK}33`}},
       ce("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:"6px",marginBottom:"10px"}},
         ce("div",{style:{fontWeight:700,fontSize:"14px"}},"🗓 Vendas dos últimos 7 dias"),
