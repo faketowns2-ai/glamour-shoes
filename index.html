@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-06a";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-06b";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -659,6 +659,7 @@ function buildCheckout(){
         ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},"WhatsApp com DDD"),phoneInp),
       ce("div",{style:{marginBottom:"13px"}},
         ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",marginBottom:"5px"}},"Nome"),nameInp),
+buildEndCard(),
       ce("div",{style:{background:"#f7f0f5",borderRadius:"12px",padding:"13px 15px",margin:"8px 0 16px",fontSize:"13px"}},
         ce("div",{style:{fontWeight:700,marginBottom:"7px"}},"Resumo:"),
         ...S.cart.map(i=>ce("div",{style:{display:"flex",justifyContent:"space-between",marginBottom:"3px"}},
@@ -676,8 +677,80 @@ function buildCheckout(){
   );
 }
 
+// ─── ENDEREÇO DE ENTREGA ────────────────────────────────────────────────────
+// O cliente informa no site; vai junto com o pedido para a planilha e para a InfinitePay.
+const END_VAZIO={cep:"",rua:"",numero:"",bairro:"",cidade:"",uf:"",complemento:""};
+S.cEnd=Object.assign({},END_VAZIO,lsGet("gs_end",{}));
+function cepFmt(v){const d=String(v||"").replace(/\D/g,"").slice(0,8);return d.length>5?d.slice(0,5)+"-"+d.slice(5):d;}
+function endTexto(e){
+if(!e||!e.rua) return "";
+return e.rua+", "+(e.numero||"s/n")+(e.complemento?" ("+e.complemento+")":"")+", "+(e.bairro||"")+", "+(e.cidade||"")+"/"+(e.uf||"")+", CEP "+cepFmt(e.cep);
+}
+function endPayload(){
+const e=S.cEnd||{}, o={};
+Object.keys(END_VAZIO).forEach(k=>{o[k]=String(e[k]||"").trim();});
+o.cep=o.cep.replace(/\D/g,""); o.uf=o.uf.toUpperCase();
+return (o.cep||o.rua)?o:null;
+}
+function endErro(){
+const e=endPayload()||{};
+if(String(e.cep||"").length!==8) return "Informe o CEP de entrega (8 números).";
+if(!e.rua) return "Informe a rua do endereço de entrega.";
+if(!e.numero) return "Informe o número da casa (ou s/n).";
+if(!e.bairro) return "Informe o bairro da entrega.";
+if(!e.cidade||!/^[A-Z]{2}$/.test(e.uf)) return "Informe a cidade e o estado (UF) da entrega.";
+return "";
+}
+function buildEndCard(){
+const save=()=>lsSet("gs_end",S.cEnd);
+const inputs={};
+const fld=(k,ph,extra)=>{
+const i=ce("input",Object.assign({type:"text",class:"inp",placeholder:ph,autocomplete:"off"},extra||{}));
+i.value=S.cEnd[k]||"";
+i.addEventListener("input",()=>{S.cEnd[k]=i.value;save();});
+inputs[k]=i; return i;
+};
+const box=(lbl,inp,flex)=>ce("div",{style:{flex:flex||"1 1 100%",minWidth:"0",marginBottom:"10px"}},
+ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",marginBottom:"4px",color:"#555"}},lbl),inp);
+const cep=fld("cep","00000-000",{inputmode:"numeric",maxlength:"9",autocomplete:"postal-code"});
+const st=ce("div",{style:{fontSize:"11px",color:"#888",marginTop:"4px"}},"Digite o CEP e o endereço é preenchido sozinho.");
+cep.addEventListener("input",async()=>{
+cep.value=cepFmt(cep.value); S.cEnd.cep=cep.value; save();
+const d=cep.value.replace(/\D/g,""); if(d.length!==8) return;
+st.textContent="Buscando endereço...";
+try{
+const j=await (await fetch("https://viacep.com.br/ws/"+d+"/json/")).json();
+if(cep.value.replace(/\D/g,"")!==d) return;
+if(j.erro){ st.textContent="CEP não encontrado. Preencha o endereço abaixo."; return; }
+[["rua",j.logradouro],["bairro",j.bairro],["cidade",j.localidade],["uf",j.uf]].forEach(([k,v])=>{ if(v){ S.cEnd[k]=v; inputs[k].value=v; } });
+save(); st.textContent="✓ Endereço encontrado. Confira e informe o número.";
+if(!inputs.numero.value) inputs.numero.focus();
+}catch(x){ st.textContent="Não foi possível buscar o CEP. Preencha o endereço abaixo."; }
+});
+const cepBox=box("CEP",cep,"1 1 140px"); cepBox.appendChild(st);
+return ce("div",{style:{border:"1.5px solid #f0e0ea",borderRadius:"12px",padding:"12px 14px 4px",marginBottom:"13px"}},
+ce("div",{style:{fontWeight:700,fontSize:"14px",marginBottom:"2px"}},"📍 Endereço de entrega"),
+ce("div",{style:{fontSize:"11px",color:"#888",marginBottom:"10px"}},"Obrigatório para pagar agora. Assim já separamos seu pedido para entrega."),
+ce("div",{style:{display:"flex",flexWrap:"wrap",gap:"0 10px"}},
+cepBox,
+box("Rua",fld("rua","Rua, avenida...",{autocomplete:"address-line1"})),
+box("Número",fld("numero","Nº ou s/n",{inputmode:"text"}),"1 1 90px"),
+box("Complemento",fld("complemento","Apto, bloco, referência"),"2 1 160px"),
+box("Bairro",fld("bairro","Bairro")),
+box("Cidade",fld("cidade","Cidade",{autocomplete:"address-level2"}),"3 1 160px"),
+box("UF",fld("uf","AP",{maxlength:"2",autocomplete:"address-level1",style:{textTransform:"uppercase"}}),"1 1 60px")));
+}
+function endBox(o){
+const t=endTexto(o.endereco); if(!t) return null;
+return ce("div",{style:{fontSize:"12px",color:"#1a1a2e",background:"#f7f0f5",borderRadius:"8px",padding:"6px 10px",margin:"4px 0 8px"}},
+"📍 "+t+"  ",
+ce("a",{href:"https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(t),target:"_blank",style:{color:"#1565c0",fontWeight:600}},"Mapa"),
+" · ",
+ce("a",{href:"#",style:{color:"#1565c0",fontWeight:600},onclick:e=>{e.preventDefault();try{navigator.clipboard.writeText(t);toast("Endereço copiado!");}catch(x){}}},"Copiar"));
+}
+
 function cartPayload(){
-  return {mode:VAREJO?"varejo":"atacado",client:S.cName.trim(),phone:phoneKey(S.cPhone),ref:getRef(),
+  return {mode:VAREJO?"varejo":"atacado",client:S.cName.trim(),phone:phoneKey(S.cPhone),ref:getRef(),endereco:endPayload(),
           items:S.cart.map(i=>({pid:i.pid,size:i.size,qty:i.qty}))};
 }
 async function doFinalize(){
@@ -690,7 +763,7 @@ async function doFinalize(){
   const total=d.ok?d.total:S.cart.reduce((s,i)=>s+i.price*i.qty,0);
   const lines=S.cart.map(i=>`• ${i.name} | Nº ${i.size} | Qtd: ${i.qty} | ${fmt(i.price*i.qty)}`).join("\n");
   const ref=getRef();
-  const msg=`*Pedido Glamour❤️Shoes${VAREJO?" (VAREJO)":" (ATACADO)"}*${d.ok?` #${d.id}`:""}\n\nCliente: ${S.cName}\nWhatsApp: ${phoneFmt(S.cPhone)}${ref?`\nIndicação: ${ref}`:""}\n\n${lines}\n\n*Total: ${fmt(total)}*`;
+  const msg=`*Pedido Glamour❤️Shoes${VAREJO?" (VAREJO)":" (ATACADO)"}*${d.ok?` #${d.id}`:""}\n\nCliente: ${S.cName}\nWhatsApp: ${phoneFmt(S.cPhone)}${ref?`\nIndicação: ${ref}`:""}\n\n${lines}${endTexto(S.cEnd)?"\n\n📍 Entrega: "+endTexto(S.cEnd):""}\n\n*Total: ${fmt(total)}*`;
   S.cart=[]; S.cName=""; S.cPhone="";
   toast("Pedido enviado! Aguardando confirmação."); go("catalog");
   location.href=`https://wa.me/${WA}?text=${encodeURIComponent(msg)}`;
@@ -699,6 +772,7 @@ async function doFinalize(){
 async function doPay(){
   if(!S.cName.trim()) return toast("Informe o nome!");
   if(!phoneValid(S.cPhone)) return toast(PHONE_MSG,4000);
+const _eErr=endErro(); if(_eErr) return toast(_eErr,4500);
   if(S.busy) return; S.busy=true; render();
   const d=await _call({action:"checkout",...cartPayload()});
   if(!d.ok||!d.url){ S.busy=false; render(); return toast(d.error||"Não foi possível gerar o pagamento.",4500); }
@@ -733,7 +807,8 @@ function buildPaid(){
     ce("p",{style:{color:"#888",fontSize:"13px"}},"Isso leva só alguns segundos."));
   const paid=r.state==="paid";
   const lines=o&&o.items?o.items.map(i=>`• ${i.name} | Nº ${i.size} | Qtd: ${i.qty}`).join("\n"):"";
-  const msg=`*Pedido PAGO Glamour❤️Shoes* #${r.id}\n\n${o?`Cliente: ${o.client}\n\n${lines}\n\n*Total pago: ${fmt(o.total)}*`:""}${r.receipt?`\n\nComprovante: ${r.receipt}`:""}`;
+  const _e=o&&o.endereco?endTexto(o.endereco):"";
+const msg=`*Pedido PAGO Glamour❤️Shoes* #${r.id}\n\n${o?`Cliente: ${o.client}\n\n${lines}\n\n*Total pago: ${fmt(o.total)}*`:""}${_e?"\n\n📍 Entrega: "+_e:""}${r.receipt?`\n\nComprovante: ${r.receipt}`:""}`;
   return ce("div",{class:"card",style:{maxWidth:"480px",margin:"30px auto",textAlign:"center",padding:"30px 22px"}},
     ce("div",{style:{fontSize:"44px"}},paid?"✅":"🕐"),
     ce("h2",{style:{margin:"10px 0 6px"}},paid?"Pagamento aprovado!":"Pagamento em análise"),
@@ -863,6 +938,7 @@ function buildOrders(){
               o.ref?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#e0f2f1",
                 color:"#00695c",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},`🤝 ${o.ref}`):null),
             ce("div",{style:{fontSize:"12px",color:"#aaa",marginBottom:"6px"}},o.dateStr),
+endBox(o),
             isEditing?buildOrderEditor(o):ce("div",{},
               ...o.items.map(i=>ce("div",{style:{fontSize:"13px",color:"#555",marginBottom:"2px"}},
                 `• ${i.name} | Nº ${i.size} | Qtd: ${i.qty} | ${fmt(i.price*i.qty)}`)),
