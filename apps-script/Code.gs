@@ -9,7 +9,7 @@ const TOKEN_DIAS  = 30;
 const TZ          = "America/Belem";
 
 const H_PROD = ["id","code","gender","name","desc","price","cost","image","featured","stock","varejo"];
-const H_ORD  = ["id","date","dateStr","client","phone","items","total","status","origin","ref","comissao","comissaoPaga","pago","pagamento"];
+const H_ORD  = ["id","date","dateStr","client","phone","items","total","status","origin","ref","comissao","comissaoPaga","pago","pagamento","endereco"];
 const H_CRM  = ["id","name","phone","orders","pending","lastOrder","since"];
 const H_AFI  = ["codigo","nome","whatsapp","pix","comissao","ativo","criado","chave"];
 const H_SAQ  = ["id","codigo","nome","valor","pix","status","solicitadoEm","atualizadoEm","pedidos","obs"];
@@ -156,6 +156,8 @@ function createOrder_(ss, p, pay) {
   if (!(phone.length === 11 || phone.length === 10)) return { ok: false, error: "Informe o WhatsApp com DDD!" };
   const reqItems = Array.isArray(p.items) ? p.items : [];
   if (!reqItems.length || reqItems.length > 40) return { ok: false, error: "Carrinho vazio." };
+const endereco = endereco_(p.endereco);
+if (pay) { const eErr = enderecoErro_(endereco); if (eErr) return { ok: false, error: eErr }; }
 
   const prods = loadProducts(ss);
   const items = [];
@@ -185,7 +187,7 @@ function createOrder_(ss, p, pay) {
     dateStr: Utilities.formatDate(now, TZ, "dd/MM/yyyy, HH:mm:ss"),
     client: client, phone: phone, items: items, total: total, status: "pending",
     origin: mode === "varejo" ? "varejo" : "catalog", ref: afi ? afi.codigo : "",
-    comissao: 0, comissaoPaga: false, pago: false, pagamento: {}
+    comissao: 0, comissaoPaga: false, pago: false, pagamento: {}, endereco: endereco || {}
   };
 
   let url = "";
@@ -199,8 +201,16 @@ function createOrder_(ss, p, pay) {
       items: items.map(i => ({ quantity: i.qty, price: Math.round(i.price * 100), description: `${i.name} nº ${i.size}`.slice(0, 120) })),
       customer: { name: client, phone_number: "+55" + (digits.length > 11 ? digits.slice(-11) : digits) }
     };
-    const res = UrlFetchApp.fetch("https://api.checkout.infinitepay.io/links", {
-      method: "post", contentType: "application/json", payload: JSON.stringify(body), muteHttpExceptions: true });
+    // Endereço já vai preenchido no checkout da InfinitePay
+if (endereco && endereco.cep) body.address = { cep: endereco.cep, street: endereco.rua, number: endereco.numero,
+neighborhood: endereco.bairro, city: endereco.cidade, state: endereco.uf, complement: endereco.complemento || "" };
+const linkOpts = { method: "post", contentType: "application/json", muteHttpExceptions: true };
+let res = UrlFetchApp.fetch("https://api.checkout.infinitepay.io/links", Object.assign({ payload: JSON.stringify(body) }, linkOpts));
+// Se a InfinitePay recusar o endereço, gera o link sem ele (o endereço continua salvo no pedido)
+if (res.getResponseCode() >= 300 && body.address) {
+delete body.address;
+res = UrlFetchApp.fetch("https://api.checkout.infinitepay.io/links", Object.assign({ payload: JSON.stringify(body) }, linkOpts));
+}
     let r = {};
     try { r = JSON.parse(res.getContentText()); } catch (x) {}
     if (res.getResponseCode() >= 300 || !r.url) return { ok: false, error: "Não foi possível gerar o pagamento agora. Tente de novo ou finalize pelo WhatsApp." };
@@ -211,6 +221,22 @@ function createOrder_(ss, p, pay) {
   appendOrder_(ss, order);
   upsertCRM_(ss, order);
   return { ok: true, id: order.id, total: total, url: url, ref: order.ref };
+}
+
+// ── ENDEREÇO DE ENTREGA (informado pelo cliente no site) ───────────────────
+function endereco_(e) {
+if (typeof e === "string") { try { e = JSON.parse(e); } catch (x) { e = null; } }
+if (!e || typeof e !== "object") return null;
+const s = (v, n) => String(v || "").trim().slice(0, n);
+const o = { cep: String(e.cep || "").replace(/\D/g, "").slice(0, 8), rua: s(e.rua, 120), numero: s(e.numero, 20),
+bairro: s(e.bairro, 80), cidade: s(e.cidade, 80), uf: s(e.uf, 2).toUpperCase(), complemento: s(e.complemento, 120) };
+return (o.cep || o.rua) ? o : null;
+}
+function enderecoErro_(e) {
+if (!e || e.cep.length !== 8) return "Informe o CEP de entrega.";
+if (!e.rua || !e.numero || !e.bairro) return "Informe rua, número e bairro da entrega.";
+if (!e.cidade || !/^[A-Z]{2}$/.test(e.uf)) return "Informe a cidade e o estado (UF) da entrega.";
+return "";
 }
 
 function isHidden_(prod) { return !!(prod.stock && prod.stock._oculto); }
@@ -270,7 +296,7 @@ function confirmPayment_(ss, p) {
   return { ok: true, paid: true, order: publicOrder_(order) };
 }
 function publicOrder_(o) {
-  return { id: o.id, client: o.client, total: o.total, items: o.items.map(i => ({ name: i.name, size: i.size, qty: i.qty, price: i.price })) };
+  return { id: o.id, client: o.client, total: o.total, endereco: o.endereco || {}, items: o.items.map(i => ({ name: i.name, size: i.size, qty: i.qty, price: i.price })) };
 }
 function decrementStock_(ss, items) {
   const sh = ss.getSheetByName("Produtos");
@@ -348,7 +374,8 @@ function rowToOrder_(hdr, r) {
     comissao: Number(o.comissao || 0),
     comissaoPaga: bool_(o.comissaopaga),
     pago:    bool_(o.pago),
-    pagamento: parseJ_(o.pagamento, {})
+    pagamento: parseJ_(o.pagamento, {}),
+endereco: parseJ_(o.endereco, {})
   };
 }
 function loadOrders(ss) {
@@ -427,7 +454,8 @@ function orderRow_(o) {
     o.id || "", o.date || "", o.dateStr || "", o.client || "", o.phone || "",
     JSON.stringify(o.items || []), Number(o.total || 0), o.status || "pending", o.origin || "catalog",
     o.ref || "", Number(o.comissao || 0), o.comissaoPaga ? true : false, o.pago ? true : false,
-    JSON.stringify(o.pagamento || {})
+    JSON.stringify(o.pagamento || {}),
+JSON.stringify(o.endereco || {})
   ];
 }
 function appendOrder_(ss, order) {
@@ -450,6 +478,7 @@ function saveOrders(ss, orders) {
     if (s && s.pago && !o.pago) return Object.assign({}, s, { comissaoPaga: !!o.comissaoPaga || s.comissaoPaga });
     if (s && s.comissaoPaga) o.comissaoPaga = true;   // pago por saque não volta atrás
     if (s && s.pagamento && s.pagamento.link && !(o.pagamento && o.pagamento.link)) o.pagamento = s.pagamento;
+if (s && s.endereco && s.endereco.cep && !(o.endereco && o.endereco.cep)) o.endereco = s.endereco; // endereço nunca se perde
     return o;
   });
   const missing = server.filter(o => !seen[String(o.id)]);
