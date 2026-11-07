@@ -12,6 +12,7 @@ const H_PROD = ["id","code","gender","name","desc","price","cost","image","featu
 const H_ORD  = ["id","date","dateStr","client","phone","items","total","status","origin","ref","comissao","comissaoPaga","pago","pagamento","endereco"];
 const H_CRM  = ["id","name","phone","orders","pending","lastOrder","since"];
 const H_AFI  = ["codigo","nome","whatsapp","pix","comissao","ativo","criado","chave","status","instagram","cidade","aceite"];
+const H_CLQ  = ["codigo","data","cliques"];
 const H_SAQ  = ["id","codigo","nome","valor","pix","status","solicitadoEm","atualizadoEm","pedidos","obs"];
 const DIAS_LIBERACAO = 1;   // comissão fica disponível para saque 1 dia depois da venda
 const SAQUE_MINIMO   = 10;  // R$
@@ -43,7 +44,7 @@ function handleRequest(e) {
         // Visitante não vê preço de custo, pedidos, clientes nem afiliados
         const prods = loadProducts(ss);
         const out = { ok: true, admin: admin, products: admin ? prods : prods.map(x => { const c = Object.assign({}, x); delete c.cost; return c; }) };
-        if (admin) { out.orders = loadOrders(ss); out.crm = loadCRM(ss); out.afiliados = withLock_(() => ensureChaves_(ss)); out.saques = loadSaques(ss); out.comissaoPadrao = comissaoPadrao_(); }
+        if (admin) { out.orders = loadOrders(ss); out.crm = loadCRM(ss); out.afiliados = withLock_(() => ensureChaves_(ss)); out.saques = loadSaques(ss); out.comissaoPadrao = comissaoPadrao_(); out.cliques = resumoCliques_(ss); }
         return json_(out);
       }
       case "login":      return json_(login_(p.pass));
@@ -60,6 +61,7 @@ function handleRequest(e) {
       case "webhook":     return json_(withLock_(() => confirmPayment_(ss, p)));
       case "lookupClient": return json_(lookupClient_(ss, p.phone));
       case "afiliadoPainel": return json_(afiliadoPainel_(ss, p.chave));
+      case "clique":         return json_(registraClique_(ss, p.ref));
       case "infoCadastro":   return json_({ ok: true, comissao: comissaoPadrao_(), saqueMinimo: SAQUE_MINIMO, diasLiberacao: DIAS_LIBERACAO });
       case "cadastroAfiliado": return json_(withLock_(() => cadastroAfiliado_(ss, p)));
       case "setComissaoPadrao": {
@@ -568,6 +570,48 @@ function novaChave_(ss, codigo) {
   return { ok: true, afiliados: loadAfiliados(ss) };
 }
 
+// ── CLIQUES NOS LINKS DOS AFILIADOS ─────────────────────────────────────────
+// Uma linha por afiliado por dia. O site conta no máximo 1 clique por aparelho por dia.
+function registraClique_(ss, ref) {
+  const cod = String(ref || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 30);
+  if (!cod) return { ok: false };
+  const cache = CacheService.getScriptCache();
+  const hora = Number(cache.get("clq_hora") || 0);
+  if (hora >= 3000) return { ok: false };                       // trava contra robôs
+  const a = loadAfiliados(ss).find(x => x.codigo === cod);
+  if (!a || a.status !== "aprovado" || !a.ativo) return { ok: false };
+  cache.put("clq_hora", String(hora + 1), 3600);
+  return withLock_(() => {
+    const sh = ensureHeader_(ss, "Cliques", H_CLQ);
+    const hoje = Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd");
+    const rows = sh.getDataRange().getValues();
+    for (let i = rows.length - 1; i >= 1 && i >= rows.length - 400; i--) {   // dias recentes ficam no fim
+      if (String(rows[i][0]) === cod && dataISO_(rows[i][1]) === hoje) {
+        sh.getRange(i + 1, 3).setValue(Number(rows[i][2] || 0) + 1);
+        return { ok: true };
+      }
+    }
+    sh.appendRow([cod, hoje, 1]);
+    return { ok: true };
+  });
+}
+function loadCliques_(ss) {
+  const t = readSheet_(ss, "Cliques");
+  if (!t) return [];
+  return t.rows.map(r => ({ codigo: String(r[0]), data: dataISO_(r[1]), cliques: Number(r[2] || 0) }));
+}
+function resumoCliques_(ss, so) {
+  const ini = Utilities.formatDate(new Date(Date.now() - 29 * 864e5), TZ, "yyyy-MM-dd");
+  const out = {};
+  loadCliques_(ss).forEach(c => {
+    if (so && c.codigo !== so) return;
+    const x = out[c.codigo] || (out[c.codigo] = { total: 0, d30: 0 });
+    x.total += c.cliques;
+    if (c.data >= ini) x.d30 += c.cliques;
+  });
+  return out;
+}
+
 // ── CADASTRO PÚBLICO DE AFILIADOS (/seja-afiliado) ──────────────────────────
 function comissaoPadrao_() {
   const v = Number(PropertiesService.getScriptProperties().getProperty("COMISSAO_PADRAO"));
@@ -671,7 +715,10 @@ function afiliadoPainel_(ss, chave) {
            link: SITE_URL + "/varejo?ref=" + a.codigo, diasLiberacao: DIAS_LIBERACAO, saqueMinimo: SAQUE_MINIMO,
            vendas: r.vendas.sort((x, y) => String(y.id).localeCompare(String(x.id))),
            saques: r.saques.map(q => ({ id: q.id, valor: q.valor, status: q.status, solicitadoEm: q.solicitadoEm, atualizadoEm: q.atualizadoEm, obs: q.obs })).reverse(),
-           disponivel: r.disponivel, aLiberar: r.aLiberar, emSaque: r.emSaque, recebido: r.recebido, faturado: r.faturado };
+           disponivel: r.disponivel, aLiberar: r.aLiberar, emSaque: r.emSaque, recebido: r.recebido, faturado: r.faturado,
+           cliques: resumoCliques_(ss, a.codigo)[a.codigo] || { total: 0, d30: 0 },
+           pedidos30: loadOrders(ss).filter(o => o.ref === a.codigo && o.status !== "cancelled" &&
+             String(o.date) >= Utilities.formatDate(new Date(Date.now() - 29 * 864e5), TZ, "yyyy-MM-dd")).length };
 }
 function solicitarSaque_(ss, chave) {
   const a = achaAfiliado_(ss, chave);
