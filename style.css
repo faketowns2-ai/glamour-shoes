@@ -228,3 +228,16 @@ body.adm td,body.adm th{border-color:rgba(255,255,255,.08)!important}
 }
 body.adm input:not([type=checkbox]):not([type=radio]):not(.inp){background:rgba(8,2,22,.55)!important;border:1px solid rgba(255,255,255,.12)!important;color:#f6f3ff!important;border-radius:10px}
 body.adm .sz-btn.out{background:transparent!important;border-color:rgba(255,255,255,.08)!important;color:#5c5480!important}
+/* painel do afiliado e Seja afiliado no padrão do CRM */
+.adm-pill-solo{padding:4px}
+body.adm a.adm-pill-btn{display:inline-block;color:#a99fd0}
+body.adm a.adm-pill-btn:hover{color:#f6f3ff}
+@media(max-width:1180px){ .adm-pill-solo{grid-area:sync;justify-self:end} }
+.adm-hero{background:radial-gradient(500px 220px at 100% 0%,rgba(212,255,58,.12),transparent 70%),linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02))!important;padding:26px 24px!important}
+.adm-kicker{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#d4ff3a;border:1px solid rgba(212,255,58,.35);background:rgba(212,255,58,.08);border-radius:999px;padding:4px 12px}
+.adm-hl{color:#d4ff3a}
+.adm-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:18px}
+.adm-step{background:rgba(8,2,22,.45);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:10px 8px;text-align:center;font-size:11px;font-weight:600;color:#f6f3ff}
+.adm-step b{display:block;font-family:'Inter Tight','Inter',sans-serif;font-size:18px;color:#d4ff3a;line-height:1.1;margin-bottom:2px}
+@media(max-width:480px){ .adm-steps{grid-template-columns:repeat(2,minmax(0,1fr))} }
+.adm-muted{color:#a99fd0}
