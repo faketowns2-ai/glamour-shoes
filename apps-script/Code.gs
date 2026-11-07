@@ -11,10 +11,11 @@ const TZ          = "America/Belem";
 const H_PROD = ["id","code","gender","name","desc","price","cost","image","featured","stock","varejo"];
 const H_ORD  = ["id","date","dateStr","client","phone","items","total","status","origin","ref","comissao","comissaoPaga","pago","pagamento","endereco"];
 const H_CRM  = ["id","name","phone","orders","pending","lastOrder","since"];
-const H_AFI  = ["codigo","nome","whatsapp","pix","comissao","ativo","criado","chave"];
+const H_AFI  = ["codigo","nome","whatsapp","pix","comissao","ativo","criado","chave","status","instagram","cidade","aceite"];
 const H_SAQ  = ["id","codigo","nome","valor","pix","status","solicitadoEm","atualizadoEm","pedidos","obs"];
 const DIAS_LIBERACAO = 1;   // comissão fica disponível para saque 1 dia depois da venda
 const SAQUE_MINIMO   = 10;  // R$
+const COMISSAO_PADRAO = 20; // % de quem se cadastra pelo link público (o Admin pode mudar em Afiliados)
 
 function doGet(e)  { return handleRequest(e); }
 function doPost(e) { return handleRequest(e); }
@@ -42,7 +43,7 @@ function handleRequest(e) {
         // Visitante não vê preço de custo, pedidos, clientes nem afiliados
         const prods = loadProducts(ss);
         const out = { ok: true, admin: admin, products: admin ? prods : prods.map(x => { const c = Object.assign({}, x); delete c.cost; return c; }) };
-        if (admin) { out.orders = loadOrders(ss); out.crm = loadCRM(ss); out.afiliados = withLock_(() => ensureChaves_(ss)); out.saques = loadSaques(ss); }
+        if (admin) { out.orders = loadOrders(ss); out.crm = loadCRM(ss); out.afiliados = withLock_(() => ensureChaves_(ss)); out.saques = loadSaques(ss); out.comissaoPadrao = comissaoPadrao_(); }
         return json_(out);
       }
       case "login":      return json_(login_(p.pass));
@@ -59,6 +60,15 @@ function handleRequest(e) {
       case "webhook":     return json_(withLock_(() => confirmPayment_(ss, p)));
       case "lookupClient": return json_(lookupClient_(ss, p.phone));
       case "afiliadoPainel": return json_(afiliadoPainel_(ss, p.chave));
+      case "infoCadastro":   return json_({ ok: true, comissao: comissaoPadrao_(), saqueMinimo: SAQUE_MINIMO, diasLiberacao: DIAS_LIBERACAO });
+      case "cadastroAfiliado": return json_(withLock_(() => cadastroAfiliado_(ss, p)));
+      case "setComissaoPadrao": {
+        if (!admin) return json_({ ok: false, auth: false, error: "Faça login novamente." });
+        const n = Number(String(p.comissao).replace(",", "."));
+        if (!(n > 0 && n <= 50)) return json_({ ok: false, error: "Comissão entre 1% e 50%." });
+        PropertiesService.getScriptProperties().setProperty("COMISSAO_PADRAO", String(n));
+        return json_({ ok: true, comissao: n });
+      }
       case "solicitarSaque": return json_(withLock_(() => solicitarSaque_(ss, p.chave)));
       case "saqueStatus": {
         if (!admin) return json_({ ok: false, auth: false, error: "Faça login novamente." });
@@ -179,7 +189,7 @@ if (pay) { const eErr = enderecoErro_(endereco); if (eErr) return { ok: false, e
   const afis = loadAfiliados(ss);
   const refCode = String(p.ref || "").toLowerCase();
   // comissão de afiliado só vale para vendas do varejo
-  const afi = mode === "varejo" ? afis.find(a => a.codigo === refCode && a.ativo) : null;
+  const afi = mode === "varejo" ? afis.find(a => a.codigo === refCode && a.ativo && a.status === "aprovado") : null;
 
   const now = new Date();
   const order = {
@@ -413,7 +423,11 @@ function loadAfiliados(ss) {
       comissao: Number(o.comissao || 0),
       ativo:    o.ativo === "" || o.ativo === undefined ? true : bool_(o.ativo),
       criado:   String(o.criado || ""),
-      chave:    String(o.chave || "")
+      chave:    String(o.chave || ""),
+      status:   ["pendente", "recusado"].indexOf(String(o.status || "")) >= 0 ? String(o.status) : "aprovado",
+      instagram: String(o.instagram || ""),
+      cidade:   String(o.cidade || ""),
+      aceite:   String(o.aceite || "")
     };
   });
 }
@@ -510,15 +524,35 @@ function saveCRM(ss, crm) {
 }
 
 function novaChave__() { return Utilities.getUuid().replace(/-/g, "").slice(0, 24); }
+function afiRow_(a, chave) {
+  const st = ["pendente", "recusado"].indexOf(a.status) >= 0 ? a.status : "aprovado";
+  return [String(a.codigo || "").toLowerCase(), a.nome || "", a.whatsapp || "", a.pix || "", Number(a.comissao || 0),
+          st === "aprovado" && a.ativo !== false, a.criado || "", chave || novaChave__(),
+          st, a.instagram || "", a.cidade || "", a.aceite || ""];
+}
+// O Admin manda a lista inteira. Quem se cadastrou pelo link enquanto o painel
+// estava aberto ainda não está nessa lista: é mantido, nunca apagado.
 function saveAfiliados(ss, afis) {
-  // a chave do painel nunca vem do site: preserva a da planilha ou cria uma nova
-  const chaves = {};
-  loadAfiliados(ss).forEach(a => { chaves[a.codigo] = a.chave; });
-  writeAll_(ss, "Afiliados", H_AFI, afis.map(a => {
+  const server = loadAfiliados(ss);
+  const byCod = {}; server.forEach(a => { byCod[a.codigo] = a; });
+  const vistos = {}, usados = {};
+  const rows = afis.map(a => {
     const cod = String(a.codigo || "").toLowerCase();
-    return [cod, a.nome || "", a.whatsapp || "", a.pix || "", Number(a.comissao || 0),
-            a.ativo === false ? false : true, a.criado || "", chaves[cod] || novaChave__()];
-  }));
+    const s = byCod[cod];
+    // mesmo código mas outra pessoa (cadastro novo do link): não herda a chave dela
+    const outra = s && s.whatsapp && a.whatsapp && phoneKey_(s.whatsapp) !== phoneKey_(a.whatsapp);
+    if (s && !outra) vistos[cod] = true;
+    usados[cod] = true;
+    // a chave do painel nunca vem do site: preserva a da planilha ou cria uma nova
+    return afiRow_(a, s && !outra ? s.chave : "");
+  });
+  server.filter(a => !vistos[a.codigo]).forEach(a => {
+    let c = a.codigo, n = 2;
+    while (usados[c]) c = a.codigo + (n++);
+    usados[c] = true;
+    rows.push(afiRow_(Object.assign({}, a, { codigo: c }), a.chave));
+  });
+  writeAll_(ss, "Afiliados", H_AFI, rows);
 }
 function ensureChaves_(ss) {
   const afis = loadAfiliados(ss);
@@ -530,9 +564,63 @@ function novaChave_(ss, codigo) {
   const a = afis.find(x => x.codigo === String(codigo || "").toLowerCase());
   if (!a) return { ok: false, error: "Afiliado não encontrado." };
   a.chave = "";
-  const chaves = {}; afis.forEach(x => { chaves[x.codigo] = x.chave; });
-  writeAll_(ss, "Afiliados", H_AFI, afis.map(x => [x.codigo, x.nome, x.whatsapp, x.pix, x.comissao, x.ativo, x.criado, x.chave || novaChave__()]));
+  writeAll_(ss, "Afiliados", H_AFI, afis.map(x => afiRow_(x, x.chave)));
   return { ok: true, afiliados: loadAfiliados(ss) };
+}
+
+// ── CADASTRO PÚBLICO DE AFILIADOS (/seja-afiliado) ──────────────────────────
+function comissaoPadrao_() {
+  const v = Number(PropertiesService.getScriptProperties().getProperty("COMISSAO_PADRAO"));
+  return v > 0 && v <= 50 ? v : COMISSAO_PADRAO;
+}
+// texto limpo: sem quebras, sem fórmula de planilha (=, +, -, @ no início)
+function limpo_(v, max) {
+  return String(v || "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().replace(/^[=+\-@]+/, "").slice(0, max);
+}
+function slugAfi_(nome, afis) {
+  const base = String(nome).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 16) || "afiliado";
+  let c = base, n = 2;
+  while (afis.some(a => a.codigo === c)) c = base + (n++);
+  return c;
+}
+function cadastroAfiliado_(ss, p) {
+  if (String(p.site || "")) return { ok: true };           // robô preencheu o campo escondido
+  const cache = CacheService.getScriptCache();
+  const hora = Number(cache.get("cad_hora") || 0);
+  if (hora >= 30) return { ok: false, error: "Muitos cadastros agora. Tente de novo em alguns minutos." };
+
+  const nome = limpo_(p.nome, 60);
+  const phone = phoneKey_(p.whatsapp);
+  const pix = String(p.pix || "").replace(/\s+/g, " ").trim().replace(/^[=@]+/, "").slice(0, 80);   // Pix de telefone pode começar com +
+  const insta = limpo_(p.instagram, 40).replace(/^@+/, "").replace(/[^A-Za-z0-9._]/g, "");
+  const cidade = limpo_(p.cidade, 50);
+  if (nome.length < 5 || nome.indexOf(" ") < 0) return { ok: false, error: "Informe seu nome completo." };
+  if (!/^\d{2}9\d{8}$/.test(phone)) return { ok: false, error: "Informe um WhatsApp válido com DDD." };
+  if (pix.length < 5) return { ok: false, error: "Informe sua chave Pix." };
+  if (!cidade) return { ok: false, error: "Informe sua cidade." };
+  if (!bool_(p.aceite)) return { ok: false, error: "É preciso aceitar as regras do programa." };
+  if (cache.get("cad_" + phone)) return { ok: false, error: "Recebemos seu cadastro há pouco. Aguarde nosso contato no WhatsApp." };
+
+  const afis = loadAfiliados(ss);
+  const ja = afis.find(a => samePhone_(a.whatsapp, phone));
+  if (ja) {
+    if (ja.status === "pendente") return { ok: false, error: "Seu cadastro já está em análise. Você vai receber a resposta no WhatsApp." };
+    return { ok: false, error: "Este WhatsApp já está cadastrado no programa. Fale com a loja." };
+  }
+  const agora = Utilities.formatDate(new Date(), TZ, "dd/MM/yyyy, HH:mm:ss");
+  const novo = { codigo: slugAfi_(nome, afis), nome: nome, whatsapp: phone, pix: pix, comissao: comissaoPadrao_(),
+                 ativo: false, criado: Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd"), status: "pendente",
+                 instagram: insta, cidade: cidade, aceite: agora };
+  const sh = ensureHeader_(ss, "Afiliados", H_AFI);   // cabeçalho novo antes de acrescentar a linha
+  sh.appendRow(afiRow_(novo, ""));
+  cache.put("cad_hora", String(hora + 1), 3600);
+  cache.put("cad_" + phone, "1", 600);
+  try {
+    const email = Session.getEffectiveUser().getEmail();
+    if (email) MailApp.sendEmail(email, "Novo cadastro de afiliado: " + nome,
+      `${nome} quer ser afiliado(a) da Glamour Shoes.\n\nWhatsApp: ${phone}\nCidade: ${cidade}\nInstagram: ${insta ? "@" + insta : "não informado"}\n\nAprove ou recuse em ${SITE_URL} > Admin > Afiliados.`);
+  } catch (e) {}
+  return { ok: true };
 }
 
 // ── PAINEL DO AFILIADO E SAQUES ─────────────────────────────────────────────
@@ -577,6 +665,7 @@ function achaAfiliado_(ss, chave) {
 function afiliadoPainel_(ss, chave) {
   const a = achaAfiliado_(ss, chave);
   if (!a) return { ok: false, error: "Link inválido. Peça um novo link para a loja." };
+  if (a.status !== "aprovado") return { ok: false, error: a.status === "pendente" ? "Seu cadastro ainda está em análise. Aguarde nosso contato no WhatsApp." : "Cadastro não aprovado. Fale com a loja." };
   const r = resumoAfiliado_(ss, a);
   return { ok: true, afiliado: { nome: a.nome, codigo: a.codigo, comissao: a.comissao, pix: a.pix, ativo: a.ativo },
            link: SITE_URL + "/varejo?ref=" + a.codigo, diasLiberacao: DIAS_LIBERACAO, saqueMinimo: SAQUE_MINIMO,
@@ -586,7 +675,7 @@ function afiliadoPainel_(ss, chave) {
 }
 function solicitarSaque_(ss, chave) {
   const a = achaAfiliado_(ss, chave);
-  if (!a) return { ok: false, error: "Link inválido." };
+  if (!a || a.status !== "aprovado" || !a.ativo) return { ok: false, error: "Link inválido ou afiliado inativo." };
   if (!a.pix) return { ok: false, error: "Sua chave Pix não está cadastrada. Fale com a loja." };
   const r = resumoAfiliado_(ss, a);
   if (r.saques.some(q => q.status === "solicitado" || q.status === "aprovado")) return { ok: false, error: "Você já tem um saque em andamento." };
