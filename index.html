@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Glamour❤️Shoes Revendedores</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&display=swap"/>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Inter+Tight:wght@600;700;800&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap"/>
 <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-07b";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-07c";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -158,12 +158,67 @@ function openModal(content){
 function closeModal(){ document.getElementById("overlay").classList.remove("show"); }
 
 // ─── ce: cria elemento DOM ───────────────────────────────────────────────────
+// ─── TEMA DO ADMIN (mesmo padrão visual do CRM Advocacia) ────────────────────
+// Só vale nas telas do Admin. As cores fixas do app são convertidas para a paleta
+// do CRM: fundo roxo escuro, cartões de vidro, destaque verde-limão.
+let ADM=false;
+const CRM={bg:"#120826",card:"#1f1240",accent:"#d4ff3a",text:"#f6f3ff",muted:"#a99fd0",
+           success:"#4fd18b",danger:"#ff6b6b",info:"#6aa8ff",purple:"#a77bff",warn:"#ffb547"};
+const _colRe=/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)/gi;
+function _rgb(v){
+  v=String(v).trim();
+  let m=v.match(/^#([0-9a-f]{3,8})$/i);
+  if(m){ let h=m[1]; if(h.length<6) h=h.split("").map(c=>c+c).join(""); return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16)).concat(h.length>=8?[parseInt(h.slice(6,8),16)/255]:[1]); }
+  m=v.match(/^rgba?\(([^)]*)\)$/i);
+  if(m){ const p=m[1].split(/[ ,\/]+/).filter(Boolean).map(Number); return [p[0],p[1],p[2],p.length>3?p[3]:1]; }
+  return null;
+}
+function _cls([r,g,b]){
+  const mx=Math.max(r,g,b)/255, mn=Math.min(r,g,b)/255, l=(mx+mn)/2, d=mx-mn;
+  const lum=(0.299*r+0.587*g+0.114*b)/255;
+  if(d<0.1) return {lum,pal:null};
+  let h; if(mx===r/255) h=((g-b)/255/d)%6; else if(mx===g/255) h=(b-r)/255/d+2; else h=(r-g)/255/d+4;
+  h=(h*60+360)%360;
+  const pal=h<15||h>=350?"danger":h<50?"warn":h<70?"warn":h<170?"success":h<255?"info":h<290?"purple":"accent";  // rosa da loja vira o verde-limão do CRM
+  return {lum,pal};
+}
+const _alpha=(hex,a)=>{ const [r,g,b]=_rgb(hex); return `rgba(${r},${g},${b},${a})`; };
+function _mapCol(v,kind){
+  const c=_rgb(v); if(!c) return v;
+  if(c[3]<1) return kind==="bg"&&c[0]+c[1]+c[2]<60?v:kind==="border"?"rgba(255,255,255,0.09)":v;
+  const {lum,pal}=_cls(c);
+  if(kind==="bg"){
+    if(!pal) return lum>0.6?"rgba(255,255,255,0.06)":lum<0.3?"rgba(8,2,22,0.55)":"rgba(255,255,255,0.12)";
+    return lum>0.72?_alpha(CRM[pal],0.14):CRM[pal];
+  }
+  if(kind==="border") return pal?CRM[pal]:"rgba(255,255,255,0.09)";
+  if(!pal) return lum<0.8?(lum<0.35?CRM.text:CRM.muted):CRM.text;
+  return CRM[pal];
+}
+function admStyle(st){
+  const o={...st};
+  let solidBg=null;
+  ["background","backgroundColor"].forEach(k=>{
+    if(typeof o[k]!=="string") return;
+    const only=_rgb(o[k]);
+    o[k]=o[k].replace(_colRe,m=>_mapCol(m,"bg"));
+    if(only&&only[3]===1) solidBg=o[k];
+  });
+  if(typeof o.color==="string") o.color=_mapCol(o.color,"fg");
+  ["border","borderTop","borderBottom","borderLeft","borderRight","borderColor","outline"].forEach(k=>{
+    if(typeof o[k]==="string") o[k]=o[k].replace(_colRe,m=>_mapCol(m,"border"));
+  });
+  // texto escuro sobre fundo claro do CRM (limão, verde, laranja)
+  if(solidBg&&[CRM.accent,CRM.success,CRM.warn].includes(solidBg)) o.color=CRM.bg;
+  if(o.boxShadow) o.boxShadow="none";
+  return o;
+}
 function ce(tag,props,...kids){
   const el=document.createElement(tag);
   if(props) Object.entries(props).forEach(([k,v])=>{
     if(v==null||v===false) return;
     if(k==="class") el.className=v;
-    else if(k==="style"&&typeof v==="object") Object.assign(el.style,v);
+    else if(k==="style"&&typeof v==="object") Object.assign(el.style,ADM?admStyle(v):v);
     else if(k==="checked"){ el.checked=!!v; }
     else if(k==="disabled"){ if(v) el.disabled=true; }
     else if(k.startsWith("on")&&typeof v==="function") el.addEventListener(k.slice(2).toLowerCase(),v);
@@ -370,6 +425,9 @@ function render(){
   app.appendChild(buildApp());
 }
 function buildApp(){
+  ADM=!PAINEL_AFI&&!CADASTRO_AFI&&String(S.view).startsWith("admin");
+  document.body.classList.toggle("adm",ADM);
+  if(ADM) return ce("div",{class:"adm-app"},buildAdmHeader(),ce("div",{class:"main"},buildView()));
   if(CADASTRO_AFI) return ce("div",{},
     ce("header",{},ce("div",{style:{fontWeight:900,fontSize:"19px",color:"#fff"}},"Glamour❤️Shoes ",
       ce("span",{style:{fontSize:"12px",fontWeight:400,color:"#ccc"}},"Seja afiliado(a)"))),
@@ -415,6 +473,19 @@ setInterval(()=>{
   });
 },1000);
 
+function buildAdmHeader(){
+  return ce("header",{class:"adm-header"},
+    ce("div",{class:"adm-brand"},
+      ce("div",{class:"adm-logo"},"Glamour Shoes"),
+      ce("div",{class:"adm-logo-sub"},"Painel administrativo")),
+    ce("nav",{class:"adm-pill"},
+      ...[["catalog","Catálogo"],["cart","Carrinho"],["admin","Admin"]].map(([v,l])=>
+        ce("button",{class:"adm-pill-btn"+(v==="admin"?" on":""),onclick:()=>{ if(v==="admin") (S.unlocked||S.token)?(S.unlocked=true,go("admin")):go("adminLogin"); else go(v); }},l))),
+    ce("div",{class:"adm-sync"},
+      ce("span",{class:"adm-dot",style:{color:S.syncError?CRM.danger:S.syncing?CRM.accent:CRM.success}},"●"),
+      ce("span",{},S.syncing?"Sincronizando...":S.syncError?S.syncError:"Sincronizado"),
+      S.lastSync&&!S.syncing?ce("span",{class:"adm-sync-hora"},S.lastSync):null));
+}
 function buildHeader(){
   const cartCount=S.cart.reduce((s,i)=>s+i.qty,0);
   return ce("header",{},
@@ -890,7 +961,7 @@ function buildAdmin(){
     !S.scriptUrl?ce("div",{style:{background:"#fff3cd",borderRadius:"12px",padding:"10px 16px",
       marginBottom:"14px",borderLeft:"4px solid #ffc107",fontSize:"13px",color:"#856404"}},
       "⚠️ Modo offline. Configure a URL do Apps Script em ⚙️ Config para sincronizar."):null,
-    ce("div",{style:{display:"flex",gap:"7px",marginBottom:"20px",flexWrap:"wrap"}},
+    ce("div",{class:"adm-tabs",style:{display:"flex",gap:"7px",marginBottom:"20px",flexWrap:"wrap"}},
       ...TABS.map(([t,label])=>{
         const btn=ce("button",{class:"tab "+(S.adminTab===t?"on":"off"),onclick:()=>{S.adminTab=t;render();}},label);
         const nSaq=S.saques.filter(q=>q.status==="solicitado"||q.status==="aprovado").length;
@@ -1490,6 +1561,9 @@ function buildDash(){
 }
 
 function mkKPI(icon,label,value,bg,color){
+  if(ADM) return ce("div",{class:"adm-stat"},
+    ce("div",{class:"adm-stat-val",style:{color}},value),
+    ce("div",{class:"adm-stat-lbl"},`${icon} ${label}`));
   return ce("div",{style:{background:bg,borderRadius:"14px",padding:"14px 16px",boxShadow:"0 2px 8px rgba(0,0,0,.06)"}},
     ce("div",{style:{fontSize:"11px",color:"#666",marginBottom:"3px"}},`${icon} ${label}`),
     ce("div",{style:{fontWeight:800,fontSize:"18px",color}},value));

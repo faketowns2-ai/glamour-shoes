@@ -147,3 +147,84 @@ body:has(.bf) .toast-el{background:#e6b655;color:#111}
   .bf-box{min-width:48px}
   .bf-box b{font-size:22px}
 }
+
+
+/* ══ ADMIN: mesmo padrão visual do CRM Advocacia (ativo com body.adm) ══
+   Paleta: fundo #120826, cartões de vidro, destaque #d4ff3a, texto #f6f3ff, apoio #a99fd0.
+   As cores fixas dos elementos são convertidas no JavaScript (admStyle). */
+body.adm{font-family:'Inter',sans-serif;color:#f6f3ff;-webkit-font-smoothing:antialiased;
+  background:radial-gradient(1200px 700px at 85% -10%,rgba(139,92,246,.45),transparent 60%),
+             radial-gradient(900px 600px at -10% 110%,rgba(109,40,217,.35),transparent 60%),
+             linear-gradient(180deg,#170a33 0%,#120826 55%,#0d061d 100%);
+  background-color:#120826;background-attachment:fixed}
+body.adm ::selection{background:#d4ff3a;color:#120826}
+body.adm ::-webkit-scrollbar-thumb{background:rgba(212,255,58,.55)}
+body.adm button,body.adm input,body.adm select,body.adm textarea{font-family:'Inter',sans-serif}
+body.adm .main{max-width:1400px;padding:28px}
+body.adm h2,body.adm h3{font-family:'Inter Tight','Inter',sans-serif;font-weight:800;text-transform:uppercase;letter-spacing:-.01em;color:#f6f3ff}
+body.adm a{color:#6aa8ff}
+
+/* topo */
+.adm-header{background:rgba(18,8,38,.72);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.07);
+  padding:14px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;gap:12px;flex-wrap:wrap}
+.adm-logo{font-family:'Inter Tight','Inter',sans-serif;font-size:20px;font-weight:800;color:#f6f3ff;letter-spacing:-.02em;text-transform:uppercase;line-height:1}
+.adm-logo-sub{font-size:10px;color:#a99fd0;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin-top:4px}
+.adm-pill,body.adm .adm-tabs{display:flex;gap:4px;background:rgba(255,255,255,.04);border-radius:999px;padding:4px;border:1px solid rgba(255,255,255,.1);flex-wrap:wrap}
+body.adm .adm-tabs{display:inline-flex!important;gap:4px!important}
+.adm-pill-btn,body.adm .tab{padding:8px 16px;border-radius:999px;border:none;cursor:pointer;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  background:transparent;color:#a99fd0;white-space:nowrap;box-shadow:none;transition:all .2s;position:relative}
+.adm-pill-btn.on,body.adm .tab.on{background:#d4ff3a;color:#120826;box-shadow:0 0 24px rgba(212,255,58,.35)}
+body.adm .tab.off{background:transparent;color:#a99fd0}
+.adm-pill-btn:hover,body.adm .tab.off:hover{color:#f6f3ff}
+.adm-sync{display:flex;align-items:center;gap:8px;font-size:11px;color:#a99fd0;font-family:'JetBrains Mono',monospace}
+.adm-sync-hora{opacity:.7}
+
+/* superfícies */
+body.adm .card{background:linear-gradient(180deg,rgba(255,255,255,.05) 0%,rgba(255,255,255,.02) 100%);border:1px solid rgba(255,255,255,.09);
+  border-radius:22px;padding:22px;box-shadow:0 10px 40px rgba(5,0,20,.35);color:#f6f3ff}
+.adm-stat{background:linear-gradient(180deg,rgba(255,255,255,.06) 0%,rgba(255,255,255,.02) 100%);border:1px solid rgba(255,255,255,.09);border-radius:22px;padding:20px 18px}
+.adm-stat-val{font-family:'Inter Tight','Inter',sans-serif;font-size:26px;font-weight:800;letter-spacing:-.03em;line-height:1.1;color:#f6f3ff;word-break:break-word}
+.adm-stat-lbl{font-size:10px;color:#a99fd0;text-transform:uppercase;letter-spacing:.12em;font-weight:700;margin-top:6px}
+.adm-stat > div:not(.adm-stat-val):not(.adm-stat-lbl){color:#a99fd0!important}
+body.adm .kpi-grid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+body.adm .modal{background:#170c33;border:1px solid rgba(255,255,255,.1);border-radius:28px;color:#f6f3ff;box-shadow:0 30px 80px rgba(0,0,0,.55)}
+body.adm .overlay{background:rgba(8,2,22,.7);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+
+/* botões e campos */
+body.adm .btn{border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;transition:transform .15s,background .2s}
+body.adm .btn:not(:disabled):hover{transform:translateY(-1px)}
+body.adm .btn:disabled{background:rgba(255,255,255,.06)!important;color:#6b6290!important}
+body.adm .inp,body.adm select,body.adm textarea{background:rgba(8,2,22,.55);border:1px solid rgba(255,255,255,.12);border-radius:14px;color:#f6f3ff;padding:10px 14px}
+body.adm .inp::placeholder,body.adm textarea::placeholder{color:#6b6290}
+body.adm .inp:focus,body.adm select:focus,body.adm textarea:focus{border-color:#d4ff3a;box-shadow:0 0 0 3px rgba(212,255,58,.15)}
+body.adm select option{background:#1b0f38;color:#f6f3ff}
+body.adm input[type=checkbox]{accent-color:#d4ff3a}
+body.adm .qty-btn{background:transparent;border-color:#d4ff3a;color:#d4ff3a}
+body.adm .sz-btn{background:transparent;color:#f6f3ff;border-color:rgba(255,255,255,.18)}
+body.adm .sz-btn.on{background:#d4ff3a;border-color:#d4ff3a;color:#120826}
+body.adm .badge{border-radius:999px;font-size:10px;letter-spacing:.04em}
+body.adm .toast-el{background:#d4ff3a;color:#120826;box-shadow:0 0 28px rgba(212,255,58,.35)}
+body.adm .ac-drop{background:#1b0f38;border-color:rgba(255,255,255,.12)}
+body.adm .ac-row{border-bottom-color:rgba(255,255,255,.06)}
+body.adm .ac-row:hover{background:rgba(212,255,58,.08)}
+body.adm table{color:#f6f3ff}
+body.adm th{color:#a99fd0;font-size:10px;text-transform:uppercase;letter-spacing:.12em}
+body.adm td,body.adm th{border-color:rgba(255,255,255,.08)!important}
+
+@media(max-width:1180px){
+  .adm-header{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"brand sync" "nav nav";row-gap:10px;padding:12px 20px}
+  .adm-brand{grid-area:brand;min-width:0}.adm-sync{grid-area:sync;justify-self:end}
+  .adm-pill{grid-area:nav;justify-self:start}
+  body.adm .adm-tabs{display:flex!important;flex-wrap:nowrap!important;overflow-x:auto;scrollbar-width:none}
+  body.adm .adm-tabs::-webkit-scrollbar{display:none}
+  body.adm .adm-tabs > button{flex:0 0 auto}
+  body.adm .main{padding:20px}
+}
+@media(max-width:640px){
+  .adm-header{padding:10px 14px}
+  body.adm .main{padding:16px 14px}
+  .adm-sync-hora{display:none}
+  body.adm .card{padding:16px;border-radius:18px}
+}
+body.adm input:not([type=checkbox]):not([type=radio]):not(.inp){background:rgba(8,2,22,.55)!important;border:1px solid rgba(255,255,255,.12)!important;color:#f6f3ff!important;border-radius:10px}
+body.adm .sz-btn.out{background:transparent!important;border-color:rgba(255,255,255,.08)!important;color:#5c5480!important}
