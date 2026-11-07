@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-06b";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-07a";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -29,6 +29,7 @@ const GRADE_PADRAO={
 // Link /varejo mostra o preço de varejo (coluna "varejo" da planilha), sem Admin
 const VAREJO      = /^\/varejo/i.test(location.pathname);
 const PAINEL_AFI  = /^\/afiliado/i.test(location.pathname);   // painel do afiliado: /afiliado#chave
+const CADASTRO_AFI= /^\/seja-afiliado/i.test(location.pathname); // cadastro público de afiliados
 const priceOf     = p => VAREJO ? (+p.varejo||0) : (+p.price||0);
 
 // BLACK FRIDAY: para desligar, troque ativo:true por false. Desliga sozinho após "fim".
@@ -259,6 +260,7 @@ async function loadFromSheets(force=false){
     if(data.ok&&S.token&&!data.admin) logoutLocal("Sessão expirada. Entre de novo no Admin.");
     if(data.ok){
       if(data.afiliados){ S.afiliados=data.afiliados; lsSet("gs_afi",S.afiliados); }
+      if(data.comissaoPadrao) S.comissaoPadrao=data.comissaoPadrao;
       if(data.saques){ S.saques=data.saques; lsSet("gs_saq",S.saques); }
       if(force){
         if(data.products&&data.products.length>0){ S.products=normProds(data.products); lsSet("gs_prod",S.products); }
@@ -368,6 +370,10 @@ function render(){
   app.appendChild(buildApp());
 }
 function buildApp(){
+  if(CADASTRO_AFI) return ce("div",{},
+    ce("header",{},ce("div",{style:{fontWeight:900,fontSize:"19px",color:"#fff"}},"Glamour❤️Shoes ",
+      ce("span",{style:{fontSize:"12px",fontWeight:400,color:"#ccc"}},"Seja afiliado(a)"))),
+    ce("div",{class:"main",style:{maxWidth:"560px"}},buildCadastroAfi()));
   if(PAINEL_AFI) return ce("div",{class:bfOn()?"bf":""},
     ce("header",{},ce("div",{style:{fontWeight:900,fontSize:"19px",color:"#fff"}},"Glamour❤️Shoes ",
       ce("span",{style:{fontSize:"12px",fontWeight:400,color:"#ccc"}},"Painel do Afiliado"))),
@@ -888,6 +894,11 @@ function buildAdmin(){
       ...TABS.map(([t,label])=>{
         const btn=ce("button",{class:"tab "+(S.adminTab===t?"on":"off"),onclick:()=>{S.adminTab=t;render();}},label);
         const nSaq=S.saques.filter(q=>q.status==="solicitado"||q.status==="aprovado").length;
+        const nAfi=S.afiliados.filter(a=>a.status==="pendente").length;
+        if(t==="afi"&&nAfi>0) btn.appendChild(
+          ce("span",{style:{position:"absolute",top:"-4px",right:"-4px",background:"#e53935",color:"#fff",
+            borderRadius:"50%",width:"16px",height:"16px",fontSize:"9px",
+            display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}},nAfi));
         if(t==="saq"&&nSaq>0) btn.appendChild(
           ce("span",{style:{position:"absolute",top:"-4px",right:"-4px",background:"#e53935",color:"#fff",
             borderRadius:"50%",width:"16px",height:"16px",fontSize:"9px",
@@ -1688,69 +1699,137 @@ function slugAfi(nome){
   let c=base,n=2; while(S.afiliados.some(a=>a.codigo===c)) c=base+(n++);
   return c;
 }
+const LINK_CADASTRO=`${CATALOG_URL}/seja-afiliado`;
+const afiStatus=a=>a.status==="pendente"||a.status==="recusado"?a.status:"aprovado";
+async function copia(txt,msg){ try{ await navigator.clipboard.writeText(txt); toast(msg||"🔗 Copiado!"); }catch(e){ prompt("Copie:",txt); } }
+function waBoasVindas(a){
+  const nome=a.nome.split(" ")[0];
+  const txt=`Olá, ${nome}! 🎉 Seu cadastro no programa de afiliados da Glamour❤️Shoes foi APROVADO.\n\n`+
+    `Sua comissão: ${a.comissao}% sobre cada venda paga pelo seu link.\n\n`+
+    `🛍 Seu link de vendas (divulgue à vontade):\n${CATALOG_URL}/varejo?ref=${a.codigo}\n\n`+
+    (a.chave?`🔒 Seu painel (vendas, comissões e saque por Pix). Este é pessoal, não compartilhe:\n${CATALOG_URL}/afiliado#${a.chave}\n\n`:"")+
+    `Qualquer dúvida, é só chamar aqui. Boas vendas! 💖`;
+  return `https://wa.me/55${phoneKey(a.whatsapp)}?text=${encodeURIComponent(txt)}`;
+}
+async function aprovarAfi(a){
+  if(!confirm(`Aprovar ${a.nome} com comissão de ${a.comissao}%?`)) return;
+  const w=a.whatsapp?window.open("about:blank","_blank"):null;   // abre já, para o navegador não bloquear
+  a.status="aprovado"; a.ativo=true;
+  lsSet("gs_afi",S.afiliados);
+  const ok=await _post({action:"saveAfiliados",afiliados:S.afiliados});
+  if(!ok){ if(w) w.close(); a.status="pendente"; a.ativo=false; toast("⚠️ Erro ao salvar na planilha.",4500); render(); return; }
+  await loadFromSheets(false);                       // traz a chave do painel
+  const x=S.afiliados.find(z=>z.codigo===a.codigo)||a;
+  if(w) w.location.href=waBoasVindas(x);
+  toast("✅ Afiliado aprovado! Envie a mensagem de boas-vindas no WhatsApp.",4500);
+}
+function recusarAfi(a){
+  if(!confirm(`Recusar o cadastro de ${a.nome}?`)) return;
+  a.status="recusado"; a.ativo=false; saveAfiliados("Cadastro recusado.");
+}
 function buildAfiliados(){
-  if(!S.afiForm) S.afiForm={nome:"",whatsapp:"",pix:"",comissao:"10"};
-  const f=S.afiForm;
+  const padrao=S.comissaoPadrao||20;
+  if(!S.afiForm) S.afiForm={nome:"",whatsapp:"",pix:"",comissao:String(padrao)};
+  if(!S.afiSel) S.afiSel=new Set();
+  const f=S.afiForm, sel=S.afiSel;
   const inp=(id,label,key,ph,type="text")=>{
     const i=ce("input",{type,class:"inp",id,placeholder:ph}); i.value=f[key];
     i.addEventListener("input",e=>S.afiForm[key]=e.target.value);
     return ce("div",{},ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",marginBottom:"4px"}},label),i);
   };
-  const tot=S.afiliados.reduce((acc,a)=>{const t=afiStats(a);acc.v+=t.vendas;acc.f+=t.faturado;acc.p+=t.aPagar;return acc;},{v:0,f:0,p:0});
-  return ce("div",{},
-    ce("h3",{style:{marginBottom:"14px",fontSize:"17px"}},"🤝 Afiliados"),
-    ce("div",{class:"kpi-grid",style:{marginBottom:"16px"}},
-      mkKPI("🤝","Afiliados ativos",S.afiliados.filter(a=>a.ativo).length,"#e0f2f1","#00695c"),
-      mkKPI("🛍","Vendas confirmadas",tot.v,"#e8f5e9","#2e7d32"),
-      mkKPI("💰","Faturado",fmt(tot.f),"#fce4ec","#ad1457"),
-      mkKPI("⏳","Comissão a pagar",fmt(tot.p),"#fff3e0","#e65100")),
-    ce("div",{class:"card"},
-      ce("div",{style:{fontWeight:700,fontSize:"14px",marginBottom:"10px"}},"Novo afiliado"),
-      ce("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:"10px"}},
-        inp("afi-nome","Nome","nome","Ex: Ana Paula"),
-        ce("div",{},ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",marginBottom:"4px"}},"WhatsApp com DDD"),
-          phoneInput(f.whatsapp,v=>S.afiForm.whatsapp=v)),
-        inp("afi-pix","Chave Pix","pix","CPF, e-mail ou telefone"),
-        inp("afi-com","Comissão (%)","comissao","10","number")),
-      ce("button",{class:"btn",style:{marginTop:"12px",background:PINK,color:"#fff"},onclick:()=>{
-        if(!f.nome.trim()) return toast("Informe o nome do afiliado!");
-        if(f.whatsapp.trim()&&!phoneValid(f.whatsapp)) return toast(PHONE_MSG,4000);
-        const pct=+f.comissao; if(!(pct>0&&pct<=50)) return toast("Comissão entre 1% e 50%.");
-        S.afiliados.push({codigo:slugAfi(f.nome),nome:f.nome.trim(),whatsapp:f.whatsapp.trim()?phoneKey(f.whatsapp):"",pix:f.pix.trim(),comissao:pct,ativo:true,criado:toDay()});
-        S.afiForm=null; saveAfiliados("✅ Afiliado cadastrado!");
-      }},"Cadastrar afiliado")),
-    S.afiliados.length===0?ce("div",{style:{color:"#aaa",textAlign:"center",padding:"30px 0"}},"Nenhum afiliado cadastrado ainda."):null,
-    ...S.afiliados.map(a=>{
+  const pend=S.afiliados.filter(a=>afiStatus(a)==="pendente");
+  const aprov=S.afiliados.filter(a=>afiStatus(a)==="aprovado");
+  const recus=S.afiliados.filter(a=>afiStatus(a)==="recusado");
+  [...sel].forEach(c=>{ if(!aprov.some(a=>a.codigo===c)) sel.delete(c); });
+  const tot=aprov.reduce((acc,a)=>{const t=afiStats(a);acc.v+=t.vendas;acc.f+=t.faturado;acc.p+=t.aPagar;return acc;},{v:0,f:0,p:0});
+  const small=(bg,color)=>({padding:"5px 12px",fontSize:"12px",background:bg,color});
+
+  // ── link público de cadastro + comissão padrão
+  const padInp=ce("input",{type:"number",class:"inp",min:"1",max:"50",style:{width:"80px"}}); padInp.value=padrao;
+  const cardLink=ce("div",{class:"card",style:{borderLeft:`4px solid ${PINK}`}},
+    ce("div",{style:{fontWeight:700,fontSize:"14px",marginBottom:"4px"}},"🔗 Link de cadastro de afiliados"),
+    ce("div",{style:{fontSize:"12px",color:"#888",marginBottom:"8px"}},"Divulgue este link. Quem se cadastra entra como pendente aqui embaixo, e você aprova ou recusa."),
+    ce("div",{style:{fontSize:"13px",wordBreak:"break-all",color:"#1565c0",marginBottom:"10px"}},LINK_CADASTRO),
+    ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center"}},
+      ce("button",{class:"btn",style:small("#e3f2fd","#1565c0"),onclick:()=>copia(LINK_CADASTRO,"🔗 Link de cadastro copiado!")},"Copiar link"),
+      ce("button",{class:"btn",style:small("#e8f5e9","#2e7d32"),onclick:()=>window.open(`https://wa.me/?text=${encodeURIComponent(`Quer ganhar ${padrao}% de comissão vendendo calçados da Glamour❤️Shoes? Cadastre-se como afiliado(a): ${LINK_CADASTRO}`)}`,"_blank")},"Compartilhar no WhatsApp"),
+      ce("span",{style:{fontSize:"12px",marginLeft:"8px"}},"Comissão padrão de quem se cadastra (%):"),
+      padInp,
+      ce("button",{class:"btn",style:small("#f0f0f0","#1a1a2e"),onclick:async()=>{
+        const n=+String(padInp.value).replace(",","."); if(!(n>0&&n<=50)) return toast("Comissão entre 1% e 50%.");
+        const d=await _call({action:"setComissaoPadrao",comissao:n});
+        if(d.ok){ S.comissaoPadrao=d.comissao; toast("✅ Comissão padrão atualizada! Vale para os próximos cadastros."); render(); }
+        else toast(d.error||"Erro ao salvar",4500);
+      }},"Salvar")));
+
+  // ── cadastros pendentes
+  const cardPend=pend.length?ce("div",{class:"card",style:{background:"#fffbea",borderLeft:"4px solid #ffb300"}},
+    ce("div",{style:{fontWeight:700,fontSize:"14px",marginBottom:"8px"}},`⏳ ${pend.length} cadastro${pend.length>1?"s":""} aguardando aprovação`),
+    ...pend.map(a=>{
+      const pctInp=ce("input",{type:"number",class:"inp",min:"1",max:"50",style:{width:"70px",padding:"5px 8px"}}); pctInp.value=a.comissao;
+      pctInp.addEventListener("input",e=>{ const n=+String(e.target.value).replace(",","."); if(n>0&&n<=50) a.comissao=n; });
+      return ce("div",{style:{padding:"10px 0",borderTop:"1px solid #f0e3b0",display:"flex",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",alignItems:"center"}},
+        ce("div",{style:{minWidth:0,flex:"1 1 240px",fontSize:"12px",color:"#555"}},
+          ce("div",{style:{fontWeight:700,fontSize:"14px",color:"#1a1a2e"}},a.nome),
+          `${a.whatsapp?phoneFmt(a.whatsapp):"sem WhatsApp"} • ${a.cidade||"cidade não informada"}`,
+          a.instagram?ce("span",{}," • ",ce("a",{href:`https://instagram.com/${a.instagram}`,target:"_blank",style:{color:"#ad1457"}},"@"+a.instagram)):null,
+          ce("div",{},`Pix: ${a.pix||"não informado"} • cadastro em ${a.aceite||a.criado}`)),
+        ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center"}},
+          ce("span",{style:{fontSize:"12px"}},"Comissão %"),pctInp,
+          a.whatsapp?ce("a",{class:"btn",href:`https://wa.me/55${phoneKey(a.whatsapp)}`,target:"_blank",style:{...small("#e8f5e9","#2e7d32"),textDecoration:"none"}},"Conversar"):null,
+          ce("button",{class:"btn",style:small("#4caf50","#fff"),onclick:()=>aprovarAfi(a)},"✅ Aprovar"),
+          ce("button",{class:"btn",style:small("#ffebee","#c62828"),onclick:()=>recusarAfi(a)},"Recusar")));
+    })):null;
+
+  // ── comissão em massa
+  const massInp=ce("input",{type:"number",class:"inp",min:"1",max:"50",placeholder:"%",style:{width:"80px"}});
+  const todos=aprov.length>0&&aprov.every(a=>sel.has(a.codigo));
+  const cardMass=aprov.length?ce("div",{class:"card",style:{position:"sticky",top:"58px",zIndex:5}},
+    ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}},
+      ce("label",{style:{display:"flex",gap:"6px",alignItems:"center",fontSize:"13px",fontWeight:600,cursor:"pointer"}},
+        ce("input",{type:"checkbox",checked:todos,onchange:e=>{ aprov.forEach(a=>e.target.checked?sel.add(a.codigo):sel.delete(a.codigo)); render(); }}),
+        "Selecionar todos"),
+      ce("span",{style:{fontSize:"12px",color:"#888"}},`${sel.size} selecionado${sel.size!==1?"s":""}`),
+      ce("span",{style:{flex:"1"}}),
+      ce("span",{style:{fontSize:"12px"}},"Nova comissão:"),massInp,
+      ce("button",{class:"btn",disabled:sel.size===0,style:small(PINK,"#fff"),onclick:()=>{
+        const n=+String(massInp.value).replace(",","."); if(!(n>0&&n<=50)) return toast("Comissão entre 1% e 50%.");
+        const alvo=aprov.filter(a=>sel.has(a.codigo));
+        if(!confirm(`Alterar a comissão de ${alvo.length} afiliado${alvo.length>1?"s":""} para ${n}%?\n\n${alvo.map(a=>`${a.nome}: ${a.comissao}% → ${n}%`).join("\n")}\n\nVale para as próximas vendas confirmadas. Comissões já calculadas não mudam.`)) return;
+        alvo.forEach(a=>a.comissao=n); sel.clear();
+        saveAfiliados(`✅ Comissão de ${alvo.length} afiliado${alvo.length>1?"s":""} alterada para ${n}%!`);
+      }},"Aplicar aos selecionados"))):null;
+
+  const cardAfi=a=>{
       const t=afiStats(a);
       const link=`${CATALOG_URL}/varejo?ref=${a.codigo}`;
-      return ce("div",{class:"card",style:{opacity:a.ativo?1:.6}},
+      return ce("div",{class:"card",style:{opacity:a.ativo?1:.6,outline:sel.has(a.codigo)?`2px solid ${PINK}`:"none"}},
         ce("div",{style:{display:"flex",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",alignItems:"flex-start"}},
-          ce("div",{style:{minWidth:0,flex:"1 1 240px"}},
+          ce("div",{style:{minWidth:0,flex:"1 1 240px",display:"flex",gap:"10px"}},
+            ce("input",{type:"checkbox",checked:sel.has(a.codigo),style:{marginTop:"3px",width:"16px",height:"16px",flex:"none"},
+              onchange:e=>{ e.target.checked?sel.add(a.codigo):sel.delete(a.codigo); render(); }}),
+            ce("div",{style:{minWidth:0}},
             ce("div",{style:{fontWeight:700,fontSize:"14px"}},a.nome,
               ce("span",{style:{marginLeft:"8px",fontSize:"11px",color:"#888",fontWeight:400}},`${a.comissao}% • código ${a.codigo}`),
               a.ativo?null:ce("span",{style:{marginLeft:"6px",fontSize:"10px",background:"#555",color:"#fff",borderRadius:"10px",padding:"2px 8px"}},"INATIVO")),
-            ce("div",{style:{fontSize:"12px",color:"#888",marginTop:"2px"}},`${a.whatsapp?phoneFmt(a.whatsapp):"sem WhatsApp"} • Pix: ${a.pix||"não informado"}`),
-            ce("div",{style:{fontSize:"12px",marginTop:"8px",wordBreak:"break-all",color:"#1565c0"}},link)),
+            ce("div",{style:{fontSize:"12px",color:"#888",marginTop:"2px"}},`${a.whatsapp?phoneFmt(a.whatsapp):"sem WhatsApp"} • Pix: ${a.pix||"não informado"}${a.cidade?" • "+a.cidade:""}${a.instagram?" • @"+a.instagram:""}`),
+            ce("div",{style:{fontSize:"12px",marginTop:"8px",wordBreak:"break-all",color:"#1565c0"}},link))),
           ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap"}},
-            ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:"#e3f2fd",color:"#1565c0"},onclick:async()=>{
-              try{ await navigator.clipboard.writeText(link); toast("🔗 Link copiado!"); }catch(e){ prompt("Copie o link:",link); }
-            }},"Copiar link de vendas"),
-            a.chave?ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:"#ede7f6",color:"#4527a0"},onclick:async()=>{
-              const pl=`${CATALOG_URL}/afiliado#${a.chave}`;
-              try{ await navigator.clipboard.writeText(pl); toast("🔗 Link do painel copiado! Envie só para o afiliado."); }catch(e){ prompt("Copie o link do painel:",pl); }
-            }},"Copiar link do painel"):null,
-            a.chave?ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:"#f0f0f0",color:"#1a1a2e"},onclick:async()=>{
+            ce("button",{class:"btn",style:small("#e3f2fd","#1565c0"),onclick:()=>copia(link,"🔗 Link copiado!")},"Copiar link de vendas"),
+            a.chave?ce("button",{class:"btn",style:small("#ede7f6","#4527a0"),onclick:()=>copia(`${CATALOG_URL}/afiliado#${a.chave}`,"🔗 Link do painel copiado! Envie só para o afiliado.")},"Copiar link do painel"):null,
+            a.whatsapp&&a.chave?ce("a",{class:"btn",href:waBoasVindas(a),target:"_blank",style:{...small("#e8f5e9","#2e7d32"),textDecoration:"none"}},"Enviar links no WhatsApp"):null,
+            a.chave?ce("button",{class:"btn",style:small("#f0f0f0","#1a1a2e"),onclick:async()=>{
               if(!confirm(`Gerar um novo link do painel para ${a.nome}? O link antigo para de funcionar.`)) return;
               const d=await _call({action:"novaChave",codigo:a.codigo});
               if(d.ok){ S.afiliados=d.afiliados; lsSet("gs_afi",S.afiliados); toast("✅ Novo link gerado. Copie e envie ao afiliado."); render(); }
               else toast(d.error||"Erro ao gerar link",4000);
             }},"Novo link do painel"):null,
-            ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:"#f0f0f0",color:"#1a1a2e"},onclick:()=>{
+            ce("button",{class:"btn",style:small("#f0f0f0","#1a1a2e"),onclick:()=>{
               const v=prompt(`Nova comissão de ${a.nome} (%)`,a.comissao); if(v===null) return;
               const n=+String(v).replace(",","."); if(!(n>0&&n<=50)) return toast("Comissão entre 1% e 50%.");
               a.comissao=n; saveAfiliados("✅ Comissão atualizada!");
             }},"Alterar %"),
-            ce("button",{class:"btn",style:{padding:"5px 12px",fontSize:"12px",background:a.ativo?"#eceff1":"#e8f5e9",color:a.ativo?"#37474f":"#2e7d32"},
+            ce("button",{class:"btn",style:small(a.ativo?"#eceff1":"#e8f5e9",a.ativo?"#37474f":"#2e7d32"),
               onclick:()=>{a.ativo=!a.ativo;saveAfiliados(a.ativo?"✅ Afiliado reativado!":"Afiliado desativado.");}},a.ativo?"Desativar":"Reativar"))),
         ce("div",{style:{display:"flex",gap:"16px",flexWrap:"wrap",fontSize:"12px",marginTop:"10px",paddingTop:"10px",borderTop:"1px solid #eee"}},
           ce("span",{},`Pedidos: `,ce("b",{},t.pedidos)),
@@ -1759,7 +1838,103 @@ function buildAfiliados(){
           ce("span",{},`Comissão total: `,ce("b",{},fmt(t.comissaoTotal))),
           ce("span",{style:{color:t.aPagar>0?"#e65100":"#2e7d32"}},`A pagar: `,ce("b",{},fmt(t.aPagar)))),
         ce("div",{style:{fontSize:"11px",color:"#888",marginTop:"6px"}},"O afiliado pede o saque pelo painel dele. Os pagamentos ficam na aba 💸 Saques."));
-    }));
+  };
+
+  return ce("div",{},
+    ce("h3",{style:{marginBottom:"14px",fontSize:"17px"}},"🤝 Afiliados"),
+    ce("div",{class:"kpi-grid",style:{marginBottom:"16px"}},
+      mkKPI("🤝","Afiliados ativos",aprov.filter(a=>a.ativo).length,"#e0f2f1","#00695c"),
+      mkKPI("⏳","Cadastros pendentes",pend.length,"#fffbea","#b26a00"),
+      mkKPI("🛍","Vendas confirmadas",tot.v,"#e8f5e9","#2e7d32"),
+      mkKPI("💰","Faturado",fmt(tot.f),"#fce4ec","#ad1457"),
+      mkKPI("💸","Comissão a pagar",fmt(tot.p),"#fff3e0","#e65100")),
+    cardLink,
+    cardPend,
+    ce("div",{class:"card"},
+      ce("div",{style:{fontWeight:700,fontSize:"14px",marginBottom:"10px"}},"Novo afiliado (cadastro manual, já aprovado)"),
+      ce("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:"10px"}},
+        inp("afi-nome","Nome","nome","Ex: Ana Paula"),
+        ce("div",{},ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",marginBottom:"4px"}},"WhatsApp com DDD"),
+          phoneInput(f.whatsapp,v=>S.afiForm.whatsapp=v)),
+        inp("afi-pix","Chave Pix","pix","CPF, e-mail ou telefone"),
+        inp("afi-com","Comissão (%)","comissao",String(padrao),"number")),
+      ce("button",{class:"btn",style:{marginTop:"12px",background:PINK,color:"#fff"},onclick:()=>{
+        if(!f.nome.trim()) return toast("Informe o nome do afiliado!");
+        if(f.whatsapp.trim()&&!phoneValid(f.whatsapp)) return toast(PHONE_MSG,4000);
+        if(f.whatsapp.trim()&&S.afiliados.some(a=>samePhone(a.whatsapp,f.whatsapp))) return toast("Já existe afiliado com este WhatsApp.",4000);
+        const pct=+f.comissao; if(!(pct>0&&pct<=50)) return toast("Comissão entre 1% e 50%.");
+        S.afiliados.push({codigo:slugAfi(f.nome),nome:f.nome.trim(),whatsapp:f.whatsapp.trim()?phoneKey(f.whatsapp):"",pix:f.pix.trim(),comissao:pct,ativo:true,criado:toDay(),status:"aprovado"});
+        S.afiForm=null; saveAfiliados("✅ Afiliado cadastrado!");
+      }},"Cadastrar afiliado")),
+    cardMass,
+    aprov.length===0?ce("div",{style:{color:"#aaa",textAlign:"center",padding:"30px 0"}},"Nenhum afiliado aprovado ainda."):null,
+    ...aprov.map(cardAfi),
+    recus.length?ce("div",{class:"card",style:{background:"#fafafa"}},
+      ce("button",{class:"btn",style:small("#eceff1","#37474f"),onclick:()=>{S.verRecus=!S.verRecus;render();}},
+        `${S.verRecus?"Ocultar":"Ver"} cadastros recusados (${recus.length})`),
+      ...(S.verRecus?recus.map(a=>ce("div",{style:{display:"flex",justifyContent:"space-between",gap:"8px",flexWrap:"wrap",alignItems:"center",padding:"8px 0",borderTop:"1px solid #eee",fontSize:"12px"}},
+        ce("span",{},ce("b",{},a.nome),` • ${a.whatsapp?phoneFmt(a.whatsapp):""} • ${a.cidade||""}`),
+        ce("button",{class:"btn",style:small("#fffbea","#b26a00"),onclick:()=>{a.status="pendente";saveAfiliados("Cadastro voltou para pendente.");}},"Reavaliar"))):[])):null);
+}
+
+// ─── CADASTRO PÚBLICO DE AFILIADOS (/seja-afiliado) ─────────────────────────
+async function loadInfoCadastro(){
+  S.cad=S.cad||{nome:"",whatsapp:"",pix:"",instagram:"",cidade:"",aceite:false,site:"",state:"form"};
+  const d=await _call({action:"infoCadastro"});
+  if(d.ok){ S.cad.info=d; render(); }
+}
+function buildCadastroAfi(){
+  if(!S.cad) S.cad={nome:"",whatsapp:"",pix:"",instagram:"",cidade:"",aceite:false,site:"",state:"form"};
+  const c=S.cad, info=c.info||{comissao:20,saqueMinimo:10,diasLiberacao:1};
+  if(c.state==="ok") return ce("div",{class:"card",style:{textAlign:"center",padding:"36px 22px"}},
+    ce("div",{style:{fontSize:"44px"}},"🎉"),
+    ce("h2",{style:{margin:"10px 0 8px"}},"Cadastro recebido!"),
+    ce("p",{style:{fontSize:"14px",color:"#555",lineHeight:"1.5"}},
+      `Obrigada, ${c.nome.split(" ")[0]}! Vamos analisar seu cadastro e, assim que for aprovado, você recebe no WhatsApp ${phoneFmt(c.whatsapp)} o seu link de vendas e o link do seu painel de comissões.`),
+    ce("a",{class:"btn",href:`${CATALOG_URL}/varejo`,style:{marginTop:"18px",background:PINK,color:"#fff",textDecoration:"none"}},"Conhecer a loja"));
+  const lbl=t=>ce("label",{style:{fontWeight:600,fontSize:"13px",display:"block",margin:"12px 0 4px"}},t);
+  const inp=(key,ph,extra={})=>{ const i=ce("input",{type:"text",class:"inp",placeholder:ph,...extra}); i.value=c[key]; i.addEventListener("input",e=>c[key]=e.target.value); return i; };
+  const hp=ce("input",{type:"text",name:"site",tabindex:"-1",autocomplete:"off",style:{position:"absolute",left:"-9999px",width:"1px",height:"1px"}});
+  hp.addEventListener("input",e=>c.site=e.target.value);
+  const enviar=async()=>{
+    if(c.nome.trim().split(/\s+/).length<2) return toast("Informe seu nome completo.");
+    if(!phoneValid(c.whatsapp)) return toast(PHONE_MSG,4000);
+    if(c.pix.trim().length<5) return toast("Informe sua chave Pix.");
+    if(!c.cidade.trim()) return toast("Informe sua cidade.");
+    if(!c.aceite) return toast("Leia e aceite as regras do programa.",4000);
+    c.state="sending"; render();
+    const d=await _call({action:"cadastroAfiliado",nome:c.nome,whatsapp:phoneKey(c.whatsapp),pix:c.pix,instagram:c.instagram,cidade:c.cidade,aceite:true,site:c.site});
+    if(d.ok){ c.state="ok"; render(); window.scrollTo(0,0); }
+    else { c.state="form"; render(); toast(d.error||"Não foi possível enviar. Tente de novo.",5000); }
+  };
+  const regra=t=>ce("li",{style:{marginBottom:"6px"}},t);
+  return ce("div",{},
+    ce("div",{class:"card",style:{background:"linear-gradient(135deg,#1a1a2e,#3a1c4a)",color:"#fff",padding:"24px 22px"}},
+      ce("div",{style:{fontSize:"12px",letterSpacing:"1px",textTransform:"uppercase",color:"#f8bbd9"}},"Programa de afiliados"),
+      ce("h2",{style:{margin:"6px 0 8px",fontSize:"24px",lineHeight:"1.2"}},`Ganhe ${info.comissao}% de comissão indicando a Glamour❤️Shoes`),
+      ce("p",{style:{fontSize:"14px",color:"#ddd",lineHeight:"1.5"}},"Você divulga seu link, a cliente compra e paga pelo site, e a comissão cai no seu painel. O saque é por Pix.")),
+    ce("div",{class:"card"},
+      ce("div",{style:{fontWeight:700,fontSize:"15px"}},"Seus dados"),
+      lbl("Nome completo"),inp("nome","Ex: Ana Paula Souza",{autocomplete:"name",maxlength:"60"}),
+      lbl("WhatsApp com DDD"),phoneInput(c.whatsapp,v=>c.whatsapp=v),
+      lbl("Chave Pix (para receber as comissões)"),inp("pix","CPF, e-mail, telefone ou chave aleatória",{maxlength:"80"}),
+      lbl("Cidade / UF"),inp("cidade","Ex: Macapá/AP",{maxlength:"50"}),
+      lbl("Instagram (opcional)"),inp("instagram","@seuperfil",{maxlength:"40"}),
+      hp,
+      ce("div",{style:{background:"#fdf3f8",borderRadius:"10px",padding:"12px 14px",marginTop:"16px",fontSize:"12.5px",color:"#444",lineHeight:"1.45"}},
+        ce("div",{style:{fontWeight:700,marginBottom:"6px"}},"Regras do programa"),
+        ce("ul",{style:{paddingLeft:"18px"}},
+          regra(`Comissão de ${info.comissao}% sobre vendas do varejo feitas pelo seu link e pagas pelo site. Pedido cancelado ou não pago não gera comissão.`),
+          regra("A loja pode alterar o percentual em campanhas ou por decisão comercial; a mudança vale para as vendas seguintes, nunca para comissões já geradas."),
+          regra(`A comissão fica disponível ${info.diasLiberacao} dia${info.diasLiberacao!==1?"s":""} após a venda. Saque mínimo de ${fmt(info.saqueMinimo)}, pago por Pix na chave informada.`),
+          regra("O cadastro passa por aprovação. Você não tem vínculo de emprego com a loja e divulga por conta própria, sem prometer o que a loja não oferece."),
+          regra("Seus dados (nome, WhatsApp, Pix, cidade e Instagram) são usados só para o programa: contato, identificação das vendas e pagamento das comissões. Você pode pedir a exclusão a qualquer momento pelo WhatsApp da loja."))),
+      ce("label",{style:{display:"flex",gap:"8px",alignItems:"flex-start",marginTop:"12px",fontSize:"13px",cursor:"pointer"}},
+        ce("input",{type:"checkbox",checked:c.aceite,style:{marginTop:"2px",width:"16px",height:"16px",flex:"none"},onchange:e=>{c.aceite=e.target.checked;}}),
+        "Li e aceito as regras do programa e autorizo o uso dos meus dados para essa finalidade."),
+      ce("button",{class:"btn",disabled:c.state==="sending",style:{width:"100%",padding:"13px 0",marginTop:"16px",borderRadius:"30px",background:PINK,color:"#fff",fontSize:"15px"},onclick:enviar},
+        c.state==="sending"?"Enviando...":"Quero ser afiliado(a)")),
+    ce("p",{style:{fontSize:"11px",color:"#888",textAlign:"center",margin:"4px 0 20px"}},"Dúvidas? ",ce("a",{href:`https://wa.me/${WA}`,target:"_blank",style:{color:PINK}},"Fale com a loja no WhatsApp")));
 }
 
 // ─── SAQUES (ADMIN) ──────────────────────────────────────────────────────────
@@ -1937,10 +2112,11 @@ function buildConfig(){
 // ═══════════════════════════════════════════════════════════════════════════
 captureRef();
 if(PAINEL_AFI){ loadAfiPanel(); window.addEventListener("hashchange",loadAfiPanel); }
+if(CADASTRO_AFI) loadInfoCadastro();
 if(!S.token) logoutLocal("");   // visitante não guarda pedidos nem clientes no aparelho
 render();
 
-if(!PAINEL_AFI){ checkPaymentReturn(); if(S.scriptUrl) loadFromSheets(false); }
+if(!PAINEL_AFI&&!CADASTRO_AFI){ checkPaymentReturn(); if(S.scriptUrl) loadFromSheets(false); }
 
 // Aviso quando o site foi atualizado e este aparelho está com a versão antiga
 let _verAtual=null;
