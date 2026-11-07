@@ -241,3 +241,4 @@ body.adm a.adm-pill-btn:hover{color:#f6f3ff}
 .adm-step b{display:block;font-family:'Inter Tight','Inter',sans-serif;font-size:18px;color:#d4ff3a;line-height:1.1;margin-bottom:2px}
 @media(max-width:480px){ .adm-steps{grid-template-columns:repeat(2,minmax(0,1fr))} }
 .adm-muted{color:#a99fd0}
+.afi-qr{background:#fff!important;color:#120826;border-radius:14px;padding:10px;width:200px;height:200px;display:flex;align-items:center;justify-content:center;margin:0 auto}

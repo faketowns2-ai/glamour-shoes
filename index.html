@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-07d";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-07e";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -316,6 +316,7 @@ async function loadFromSheets(force=false){
     if(data.ok){
       if(data.afiliados){ S.afiliados=data.afiliados; lsSet("gs_afi",S.afiliados); }
       if(data.comissaoPadrao) S.comissaoPadrao=data.comissaoPadrao;
+      if(data.cliques) S.cliques=data.cliques;
       if(data.saques){ S.saques=data.saques; lsSet("gs_saq",S.saques); }
       if(force){
         if(data.products&&data.products.length>0){ S.products=normProds(data.products); lsSet("gs_prod",S.products); }
@@ -613,6 +614,7 @@ function getFilteredProds(){
   if(S.fSort==="price_asc") p.sort((a,b)=>priceOf(a)-priceOf(b));
   if(S.fSort==="price_desc")p.sort((a,b)=>priceOf(b)-priceOf(a));
   if(S.fSort==="featured")  p.sort((a,b)=>(b.featured?1:0)-(a.featured?1:0));
+  if(S.fProd){ const i=p.findIndex(x=>String(x.id)===S.fProd); if(i>0) p.unshift(...p.splice(i,1)); }   // produto indicado pelo afiliado primeiro
   return p;
 }
 
@@ -628,7 +630,10 @@ function buildProductCard(p){
   img.addEventListener("error",()=>img.style.display="none");
   const hasStock=allSizes.some(s=>(p.stock[s]||0)>0);
 
-  return ce("div",{class:"product-card"},
+  const indicado=S.fProd&&String(p.id)===S.fProd;
+  return ce("div",{class:"product-card",style:indicado?{outline:`3px solid ${PINK}`}:null},
+    indicado?ce("div",{style:{position:"absolute",top:"10px",right:"10px",background:"#1a1a2e",
+      color:"#fff",fontSize:"11px",fontWeight:700,padding:"3px 10px",borderRadius:"12px",zIndex:1}},"💖 Indicado para você"):null,
     p.featured?ce("div",{style:{position:"absolute",top:"10px",left:"10px",background:PINK,
       color:"#fff",fontSize:"11px",fontWeight:700,padding:"3px 10px",borderRadius:"12px",zIndex:1}},"⭐ Destaque"):null,
     ce("div",{style:{height:"8px",background:gGrad}}),
@@ -912,7 +917,15 @@ const msg=`*Pedido PAGO Glamour❤️Shoes* #${r.id}\n\n${o?`Cliente: ${o.client
 // ─── AFILIADOS: link com ?ref=codigo vale por 30 dias neste aparelho ─────────
 function captureRef(){
   const r=new URLSearchParams(location.search).get("ref");
-  if(r){ const c=r.toLowerCase().replace(/[^a-z0-9_-]/g,"").slice(0,30); if(c) lsSet("gs_ref",{c,exp:Date.now()+30*864e5}); }
+  if(r){ const c=r.toLowerCase().replace(/[^a-z0-9_-]/g,"").slice(0,30); if(c){ lsSet("gs_ref",{c,exp:Date.now()+30*864e5}); contaClique(c); } }
+  const pid=new URLSearchParams(location.search).get("p"); if(pid) S.fProd=String(pid).slice(0,20);
+}
+// 1 clique por aparelho, por afiliado, por dia (o painel mostra cliques e conversão)
+function contaClique(c){
+  const k=`gs_clk_${c}_${toDay()}`;
+  if(lsGet(k,false)) return;
+  lsSet(k,true);
+  setTimeout(()=>{ _call({action:"clique",ref:c}); },800);
 }
 function getRef(){ const r=lsGet("gs_ref",null); return r&&r.exp>Date.now()?r.c:""; }
 
@@ -2058,8 +2071,10 @@ function buildAfiliados(){
             ce("button",{class:"btn",style:small(a.ativo?"#eceff1":"#e8f5e9",a.ativo?"#37474f":"#2e7d32"),
               onclick:()=>{a.ativo=!a.ativo;saveAfiliados(a.ativo?"✅ Afiliado reativado!":"Afiliado desativado.");}},a.ativo?"Desativar":"Reativar"))),
         ce("div",{style:{display:"flex",gap:"16px",flexWrap:"wrap",fontSize:"12px",marginTop:"10px",paddingTop:"10px",borderTop:"1px solid #eee"}},
+          ce("span",{},`Cliques 30d: `,ce("b",{},((S.cliques||{})[a.codigo]||{}).d30||0),` (total ${((S.cliques||{})[a.codigo]||{}).total||0})`),
           ce("span",{},`Pedidos: `,ce("b",{},t.pedidos)),
           ce("span",{},`Vendas confirmadas: `,ce("b",{},t.vendas)),
+          ce("span",{},`Conversão: `,ce("b",{},(()=>{ const c=((S.cliques||{})[a.codigo]||{}).total||0; return c?`${Math.min(100,t.vendas/c*100).toFixed(1).replace(".",",")}%`:"sem cliques"; })())),
           ce("span",{},`Faturado: `,ce("b",{},fmt(t.faturado))),
           ce("span",{},`Comissão total: `,ce("b",{},fmt(t.comissaoTotal))),
           ce("span",{style:{color:t.aPagar>0?"#e65100":"#2e7d32"}},`A pagar: `,ce("b",{},fmt(t.aPagar)))),
@@ -2215,7 +2230,8 @@ async function loadAfiPanel(){
   const chave=location.hash.replace(/^#/,"").trim();
   if(!chave){ S.afi={state:"erro",error:"Link incompleto. Peça o link do seu painel para a loja."}; render(); return; }
   S.afi={...(S.afi||{}),state:S.afi&&S.afi.data?"ok":"loading"}; render();
-  const d=await _call({action:"afiliadoPainel",chave});
+  const [d,cat]=await Promise.all([_call({action:"afiliadoPainel",chave}),_call({action:"load"})]);
+  if(cat&&cat.ok&&cat.products) S.products=normProds(cat.products);
   S.afi=d.ok?{state:"ok",data:d,chave}:{state:"erro",error:d.error||"Não foi possível carregar o painel."};
   render();
 }
@@ -2258,6 +2274,8 @@ function buildAfiPanel(){
       ce("div",{style:{fontSize:"12px",wordBreak:"break-all",marginBottom:"8px"}},d.link),
       ce("button",{class:"btn",style:{background:"#e3f2fd",color:"#1565c0"},onclick:async()=>{
         try{await navigator.clipboard.writeText(d.link);toast("🔗 Link copiado!");}catch(e){prompt("Copie seu link:",d.link);} }},"Copiar link")),
+    buildAfiDesempenho(d),
+    buildAfiMaterial(d,a),
     d.saques.length?ce("div",{class:"card"},
       ce("div",{style:{fontWeight:700,marginBottom:"8px"}},"Seus saques"),
       ...d.saques.map(q=>ce("div",{style:{display:"flex",justifyContent:"space-between",gap:"8px",flexWrap:"wrap",padding:"8px 0",borderTop:"1px solid #eee",fontSize:"13px"}},
@@ -2271,6 +2289,85 @@ function buildAfiPanel(){
           ce("span",{},`${v.data.split("-").reverse().join("/")} • ${v.itens} par${v.itens!==1?"es":""} • ${fmt(v.total)}`),
           ce("span",{},ce("b",{},fmt(v.comissao)),ce("span",{style:{marginLeft:"8px",fontSize:"11px",color:c,fontWeight:700}},l))); })),
     ce("p",{style:{fontSize:"11px",color:"#888",textAlign:"center",margin:"8px 0 20px"}},"Este link é pessoal. Não compartilhe com ninguém."));
+}
+
+// ─── PAINEL DO AFILIADO: desempenho do link e material de divulgação ─────────
+function buildAfiDesempenho(d){
+  const c=d.cliques||{total:0,d30:0}, conv=c.d30?Math.min(100,(d.pedidos30||0)/c.d30*100):0;
+  const box=(v,l)=>ce("div",{style:{flex:"1 1 120px",background:"#f7f0f5",borderRadius:"14px",padding:"12px 14px"}},
+    ce("div",{style:{fontWeight:800,fontSize:"20px"}},v),ce("div",{style:{fontSize:"11px",color:"#888",marginTop:"2px"}},l));
+  return ce("div",{class:"card"},
+    ce("div",{style:{fontWeight:700,marginBottom:"10px"}},"Desempenho do seu link (últimos 30 dias)"),
+    ce("div",{style:{display:"flex",gap:"10px",flexWrap:"wrap"}},
+      box(c.d30,"pessoas abriram seu link"),
+      box(d.pedidos30||0,"pedidos feitos pelo link"),
+      box(c.d30?`${conv.toFixed(1).replace(".",",")}%`:"0%","de quem abriu, comprou"),
+      box(c.total,"cliques desde o início")),
+    ce("p",{style:{fontSize:"11px",color:"#888",marginTop:"8px"}},"Cada aparelho conta uma vez por dia."));
+}
+function carregaQR(){
+  if(window.QRCode) return Promise.resolve();
+  if(window._qrP) return window._qrP;
+  return window._qrP=new Promise((ok,no)=>{ const sc=document.createElement("script");
+    sc.src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"; sc.onload=ok; sc.onerror=no; document.head.appendChild(sc); });
+}
+function textoProduto(p,link){
+  const tams=Object.keys(p.stock).filter(k=>(+p.stock[k]||0)>0).sort((a,b)=>+a-+b);
+  return `👟 ${p.name}\n💰 ${fmt(p.varejo)}${tams.length?`\n📏 Numeração: ${tams.join(", ")}`:""}\n🛒 Compre aqui: ${link}`;
+}
+async function compartilhaProduto(p,link){
+  const text=textoProduto(p,link);
+  if(navigator.share){
+    try{
+      let files;
+      try{ const b=await (await fetch(p.image,{mode:"cors"})).blob(); const f=new File([b],`${p.code||p.id}.jpg`,{type:b.type||"image/jpeg"});
+        if(navigator.canShare&&navigator.canShare({files:[f]})) files=[f]; }catch(e){}
+      await navigator.share(files?{files,text}:{text}); return;
+    }catch(e){ if(e&&e.name==="AbortError") return; }
+  }
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`,"_blank");
+}
+function buildAfiMaterial(d,a){
+  const prods=S.products.filter(p=>!p.hidden&&(+p.varejo||0)>0&&Object.values(p.stock||{}).some(q=>(+q||0)>0))
+    .sort((x,y)=>(y.featured?1:0)-(x.featured?1:0));
+  const qrBox=ce("div",{id:"afi-qr",class:"afi-qr"},"⏳");
+  carregaQR().then(()=>{ const el=document.getElementById("afi-qr"); if(!el||el.dataset.ok) return; el.innerHTML=""; el.dataset.ok=1;
+    new QRCode(el,{text:d.link,width:180,height:180,colorDark:"#120826",colorLight:"#ffffff",correctLevel:QRCode.CorrectLevel.M}); })
+    .catch(()=>{ const el=document.getElementById("afi-qr"); if(el) el.textContent="QR indisponível"; });
+  const baixaQR=()=>{ const el=document.getElementById("afi-qr"); const cv=el&&el.querySelector("canvas"); const im=el&&el.querySelector("img");
+    const url=cv?cv.toDataURL("image/png"):im&&im.src; if(!url) return toast("Aguarde o QR carregar.");
+    const l=ce("a",{href:url,download:`qr-glamour-${a.codigo}.png`}); document.body.appendChild(l); l.click(); l.remove(); };
+  const sm=(bg,c)=>({padding:"6px 10px",fontSize:"11px",background:bg,color:c});
+  return ce("div",{},
+    ce("div",{class:"card"},
+      ce("div",{style:{fontWeight:700,marginBottom:"4px"}},"Seu QR code"),
+      ce("p",{style:{fontSize:"12px",color:"#888",marginBottom:"12px"}},"Use em stories, status e material impresso. Quem escanear cai na loja com o seu código."),
+      ce("div",{style:{display:"flex",gap:"16px",flexWrap:"wrap",alignItems:"center",justifyContent:"center"}},
+        qrBox,
+        ce("div",{style:{display:"flex",flexDirection:"column",gap:"8px",minWidth:"180px"}},
+          ce("button",{class:"btn",style:{background:PINK,color:"#fff"},onclick:baixaQR},"⬇ Baixar QR code"),
+          ce("button",{class:"btn",style:{background:"#e8f5e9",color:"#2e7d32"},onclick:()=>window.open(`https://wa.me/?text=${encodeURIComponent(`Conheça a Glamour❤️Shoes! Calçados com entrega e pagamento pelo site: ${d.link}`)}`,"_blank")},"Divulgar a loja no WhatsApp")))),
+    ce("div",{class:"card"},
+      ce("div",{style:{fontWeight:700,marginBottom:"4px"}},`Material de divulgação (${prods.length} produto${prods.length!==1?"s":""})`),
+      ce("p",{style:{fontSize:"12px",color:"#888",marginBottom:"12px"}},"Cada produto tem um link próprio com o seu código: a cliente abre direto nele. O texto já vai com preço e numerações disponíveis."),
+      prods.length===0?ce("div",{style:{color:"#aaa",fontSize:"13px"}},"Carregando produtos..."):null,
+      ce("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(100%,210px),1fr))",gap:"12px"}},
+        ...prods.map(p=>{
+          const link=`${CATALOG_URL}/varejo?ref=${a.codigo}&p=${encodeURIComponent(p.id)}`;
+          const img=ce("img",{src:p.image,alt:p.name,loading:"lazy",style:{width:"100%",height:"100%",objectFit:"cover"}});
+          img.addEventListener("error",()=>img.style.display="none");
+          return ce("div",{style:{background:"#f7f0f5",borderRadius:"16px",overflow:"hidden",display:"flex",flexDirection:"column"}},
+            ce("div",{style:{aspectRatio:"1/1",background:"#eee",overflow:"hidden"}},p.image?img:null),
+            ce("div",{style:{padding:"10px 12px",display:"flex",flexDirection:"column",gap:"6px",flex:"1"}},
+              ce("div",{style:{fontWeight:700,fontSize:"13px",lineHeight:"1.25"}},p.name),
+              ce("div",{style:{fontSize:"13px"}},ce("b",{style:{color:PINK}},fmt(p.varejo)),
+                ce("span",{style:{fontSize:"11px",color:"#888",marginLeft:"6px"}},`comissão ${fmt(p.varejo*(+a.comissao||0)/100)}`)),
+              ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"auto"}},
+                ce("button",{class:"btn",style:sm(PINK,"#fff"),onclick:()=>compartilhaProduto(p,link)},"Compartilhar"),
+                ce("button",{class:"btn",style:sm("#e3f2fd","#1565c0"),onclick:async()=>{
+                  try{await navigator.clipboard.writeText(textoProduto(p,link));toast("📋 Texto e link copiados!");}catch(e){prompt("Copie:",textoProduto(p,link));} }},"Copiar texto"),
+                p.image?ce("a",{class:"btn",href:p.image,target:"_blank",rel:"noopener",style:{...sm("#f0f0f0","#1a1a2e"),textDecoration:"none"}},"Abrir foto"):null)));
+        }))));
 }
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
