@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-07e";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-07f";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -974,7 +974,7 @@ async function tryLogin(p){
 function buildAdmin(){
   const pending=S.orders.filter(o=>o.status==="pending");
   const TABS=[["orders","📋 Pedidos"],["manual","🧾 Manual"],["crm","👥 CRM"],
-              ["dash","📊 Dashboard"],["stock","📦 Estoque"],["prods","🛍 Produtos"],["afi","🤝 Afiliados"],["saq","💸 Saques"],["cfg","⚙️ Config"]];
+              ["dash","📊 Dashboard"],["stock","📦 Estoque"],["prods","🛍 Produtos"],["share","📣 Compartilhar"],["afi","🤝 Afiliados"],["saq","💸 Saques"],["cfg","⚙️ Config"]];
   return ce("div",{},
     !S.scriptUrl?ce("div",{style:{background:"#fff3cd",borderRadius:"12px",padding:"10px 16px",
       marginBottom:"14px",borderLeft:"4px solid #ffc107",fontSize:"13px",color:"#856404"}},
@@ -1005,6 +1005,7 @@ function buildAdmin(){
     S.adminTab==="dash"  ?buildDash()  :
     S.adminTab==="stock" ?buildStock() :
     S.adminTab==="prods" ?buildProds() :
+    S.adminTab==="share" ?buildShare() :
     S.adminTab==="afi"   ?buildAfiliados() :
     S.adminTab==="saq"   ?buildSaques() :
     buildConfig()
@@ -2289,6 +2290,126 @@ function buildAfiPanel(){
           ce("span",{},`${v.data.split("-").reverse().join("/")} • ${v.itens} par${v.itens!==1?"es":""} • ${fmt(v.total)}`),
           ce("span",{},ce("b",{},fmt(v.comissao)),ce("span",{style:{marginLeft:"8px",fontSize:"11px",color:c,fontWeight:700}},l))); })),
     ce("p",{style:{fontSize:"11px",color:"#888",textAlign:"center",margin:"8px 0 20px"}},"Este link é pessoal. Não compartilhe com ninguém."));
+}
+
+// ─── COMPARTILHAR (ADMIN): divulgação em massa para o grupo de revendedores ──
+const tamsDe=p=>Object.keys(p.stock||{}).filter(k=>(+p.stock[k]||0)>0).sort((a,b)=>+a-+b);
+const linkProd=p=>`${CATALOG_URL}/?p=${encodeURIComponent(p.id)}`;
+function legendaAtacado(p){
+  const t=tamsDe(p), desc=String(p.desc||"").trim();
+  return [`*${String(p.name||"").trim().toUpperCase()}*`,
+          `💰 Atacado: ${fmt(p.price)}`,
+          `📏 Numeração: ${t.length?t.join(", "):"consulte"}`,
+          `🛒 ${linkProd(p)}`,
+          desc?`📝 ${desc}`:null].filter(Boolean).join("\n");
+}
+async function arquivoFoto(p){
+  if(!p.image) return null;
+  try{ const b=await (await fetch(p.image,{mode:"cors"})).blob();
+    const ext=(b.type.split("/")[1]||"jpg").replace("jpeg","jpg");
+    return new File([b],`${(p.code||p.id)}-${String(p.name).replace(/[^a-z0-9]+/gi,"-").slice(0,40)}.${ext}`,{type:b.type||"image/jpeg"}); }
+  catch(e){ return null; }
+}
+async function copiaTexto(t,msg){ try{ await navigator.clipboard.writeText(t); toast(msg); return true; }catch(e){ prompt("Copie:",t); return false; } }
+async function compartilhaUm(p){
+  const text=legendaAtacado(p);
+  await copiaTexto(text,"📋 Legenda copiada");          // se o app ignorar o texto, é só colar
+  const f=await arquivoFoto(p);
+  if(navigator.share){
+    try{ await navigator.share(f&&navigator.canShare&&navigator.canShare({files:[f]})?{files:[f],text}:{text}); return true; }
+    catch(e){ if(e&&e.name==="AbortError") return false; }
+  }
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`,"_blank"); return true;
+}
+async function baixaFotos(lista){
+  let ok=0;
+  for(const p of lista){
+    const f=await arquivoFoto(p);
+    if(f){ const a=ce("a",{href:URL.createObjectURL(f),download:f.name}); document.body.appendChild(a); a.click(); a.remove(); ok++; await new Promise(r=>setTimeout(r,350)); }
+    else if(p.image) window.open(p.image,"_blank");
+  }
+  toast(ok?`⬇ ${ok} foto${ok>1?"s":""} baixada${ok>1?"s":""}`:"Fotos abertas em novas abas",3500);
+}
+function buildShare(){
+  if(!S.shSel) S.shSel=[];                       // ids na ordem em que foram marcados
+  if(S.shTexto===undefined) S.shTexto="";
+  if(S.shSoEstoque===undefined) S.shSoEstoque=true;
+  const sel=S.shSel;
+  const todos=S.products.filter(p=>!p.hidden&&(+p.price||0)>0);
+  let lista=todos.filter(p=>!S.shSoEstoque||tamsDe(p).length>0);
+  if(S.shGen) lista=lista.filter(p=>p.gender===S.shGen);
+  if(S.shBusca) lista=lista.filter(p=>(p.name+" "+(p.code||"")).toLowerCase().includes(S.shBusca.toLowerCase()));
+  const escolhidos=sel.map(id=>todos.find(p=>String(p.id)===id)).filter(Boolean);
+  const textoGrupo=()=>[S.shTexto.trim()||null,...escolhidos.map(legendaAtacado)].filter(Boolean).join("\n\n━━━━━━━━━━\n\n");
+  const marca=(p,on)=>{ const id=String(p.id), i=sel.indexOf(id); if(on&&i<0) sel.push(id); if(!on&&i>=0) sel.splice(i,1); };
+  const sm=(bg,c)=>({padding:"6px 12px",fontSize:"11px",background:bg,color:c});
+  if(S.shPasso!=null&&escolhidos.length){
+    // modo "um por um": cada foto vai com a sua legenda
+    const i=Math.min(S.shPasso,escolhidos.length-1), p=escolhidos[i];
+    const img=ce("img",{src:p.image,alt:p.name,style:{width:"100%",height:"100%",objectFit:"cover"}}); img.addEventListener("error",()=>img.style.display="none");
+    return ce("div",{},
+      ce("h3",{style:{marginBottom:"14px",fontSize:"17px"}},`📣 Enviando ${i+1} de ${escolhidos.length}`),
+      ce("div",{class:"card",style:{maxWidth:"520px",margin:"0 auto"}},
+        ce("div",{style:{aspectRatio:"1/1",borderRadius:"16px",overflow:"hidden",background:"#eee",marginBottom:"12px"}},p.image?img:null),
+        ce("pre",{style:{whiteSpace:"pre-wrap",fontFamily:"inherit",fontSize:"13px",lineHeight:"1.5",background:"#f7f0f5",borderRadius:"12px",padding:"12px",marginBottom:"12px"}},legendaAtacado(p)),
+        ce("button",{class:"btn",style:{width:"100%",padding:"12px 0",background:PINK,color:"#fff",marginBottom:"8px"},onclick:async()=>{
+          await compartilhaUm(p); if(i<escolhidos.length-1){ S.shPasso=i+1; render(); } }},"Compartilhar foto com legenda"),
+        ce("div",{style:{display:"flex",gap:"8px",justifyContent:"space-between"}},
+          ce("button",{class:"btn",disabled:i===0,style:sm("#f0f0f0","#1a1a2e"),onclick:()=>{S.shPasso=i-1;render();}},"Anterior"),
+          ce("button",{class:"btn",style:sm("#ffebee","#c62828"),onclick:()=>{S.shPasso=null;render();}},"Encerrar"),
+          ce("button",{class:"btn",disabled:i>=escolhidos.length-1,style:sm("#f0f0f0","#1a1a2e"),onclick:()=>{S.shPasso=i+1;render();}},"Próximo"))),
+      ce("p",{style:{fontSize:"11px",color:"#888",textAlign:"center",marginTop:"8px"}},"A legenda também é copiada: se o WhatsApp não puxar o texto, é só colar na foto."));
+  }
+  const busca=ce("input",{type:"text",class:"inp",placeholder:"Buscar por nome ou código",style:{flex:"1 1 200px"}}); busca.value=S.shBusca||"";
+  busca.addEventListener("input",e=>{S.shBusca=e.target.value;clearTimeout(window._shT);window._shT=setTimeout(()=>{render();const b=document.querySelector("#sh-busca");if(b){b.focus();b.setSelectionRange(b.value.length,b.value.length);}},250);});
+  busca.id="sh-busca";
+  const abertura=ce("textarea",{class:"inp",rows:"2",placeholder:"Mensagem de abertura (opcional). Ex: Bom dia, revendedoras! Novidades de hoje 👇",style:{resize:"vertical"}});
+  abertura.value=S.shTexto; abertura.addEventListener("input",e=>S.shTexto=e.target.value);
+  const todosVis=lista.length>0&&lista.every(p=>sel.includes(String(p.id)));
+  return ce("div",{},
+    ce("h3",{style:{marginBottom:"6px",fontSize:"17px"}},"📣 Compartilhar produtos"),
+    ce("p",{style:{fontSize:"13px",color:"#888",marginBottom:"14px"}},"Marque os produtos e envie para o grupo de revendedores. A legenda leva título, preço de atacado, numeração disponível, link do produto no catálogo e a descrição, quando houver."),
+    ce("div",{class:"card",style:{position:"sticky",top:"8px",zIndex:5}},
+      ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",marginBottom:"10px"}},
+        ce("b",{style:{fontSize:"14px"}},`${escolhidos.length} selecionado${escolhidos.length!==1?"s":""}`),
+        ce("span",{style:{flex:"1"}}),
+        ce("button",{class:"btn",disabled:!escolhidos.length,style:sm(PINK,"#fff"),onclick:()=>{S.shPasso=0;render();window.scrollTo(0,0);}},"📤 Enviar um por um (foto + legenda)"),
+        ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#e3f2fd","#1565c0"),onclick:()=>copiaTexto(textoGrupo(),`📋 ${escolhidos.length} legenda${escolhidos.length>1?"s":""} copiada${escolhidos.length>1?"s":""}`)},"Copiar todas as legendas"),
+        ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#e8f5e9","#2e7d32"),onclick:()=>{
+          const t=textoGrupo(); if(t.length>6000&&!confirm("Mensagem grande: o WhatsApp pode cortar. Continuar?")) return;
+          window.open(`https://wa.me/?text=${encodeURIComponent(t)}`,"_blank"); }},"WhatsApp (só texto)"),
+        ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#f0f0f0","#1a1a2e"),onclick:()=>baixaFotos(escolhidos)},"⬇ Baixar fotos"),
+        ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#ffebee","#c62828"),onclick:()=>{sel.length=0;render();}},"Limpar")),
+      abertura),
+    ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",margin:"4px 0 12px"}},
+      ce("label",{style:{display:"flex",gap:"6px",alignItems:"center",fontSize:"13px",fontWeight:600,cursor:"pointer"}},
+        ce("input",{type:"checkbox",checked:todosVis,onchange:e=>{lista.forEach(p=>marca(p,e.target.checked));render();}}),"Selecionar todos da lista"),
+      ce("button",{class:"btn",style:sm("#fff3e0","#e65100"),onclick:()=>{todos.filter(p=>p.featured&&tamsDe(p).length).forEach(p=>marca(p,true));render();}},"+ Destaques"),
+      busca,
+      ...[["","Todos"],["Feminino","Feminino"],["Masculino","Masculino"],["Infantil","Infantil"]].map(([v,l])=>
+        ce("button",{class:"tab "+((S.shGen||"")===v?"on":"off"),onclick:()=>{S.shGen=v;render();}},l)),
+      ce("label",{style:{display:"flex",gap:"6px",alignItems:"center",fontSize:"12px",cursor:"pointer"}},
+        ce("input",{type:"checkbox",checked:!!S.shSoEstoque,onchange:e=>{S.shSoEstoque=e.target.checked;render();}}),"Só com estoque")),
+    lista.length===0?ce("div",{style:{color:"#aaa",textAlign:"center",padding:"30px 0"}},"Nenhum produto encontrado."):null,
+    ce("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(100%,220px),1fr))",gap:"12px"}},
+      ...lista.map(p=>{
+        const id=String(p.id), n=sel.indexOf(id)+1, t=tamsDe(p);
+        const img=ce("img",{src:p.image,alt:p.name,loading:"lazy",style:{width:"100%",height:"100%",objectFit:"cover"}}); img.addEventListener("error",()=>img.style.display="none");
+        return ce("div",{class:"card",style:{margin:0,padding:"0",overflow:"hidden",cursor:"pointer",outline:n?`3px solid ${PINK}`:"none",display:"flex",flexDirection:"column"},
+          onclick:e=>{ if(e.target.closest("button,a")) return; marca(p,!n); render(); }},
+          ce("div",{style:{position:"relative",aspectRatio:"1/1",background:"#eee",overflow:"hidden"}},
+            p.image?img:null,
+            ce("div",{style:{position:"absolute",top:"8px",left:"8px",width:"26px",height:"26px",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",
+              fontWeight:800,fontSize:"12px",background:n?PINK:"rgba(0,0,0,.45)",color:"#fff",border:"2px solid #fff"}},n?String(n):""),
+            t.length?null:ce("div",{style:{position:"absolute",bottom:"8px",left:"8px",background:"#e53935",color:"#fff",fontSize:"10px",fontWeight:700,padding:"2px 8px",borderRadius:"10px"}},"SEM ESTOQUE")),
+          ce("div",{style:{padding:"10px 12px",display:"flex",flexDirection:"column",gap:"4px",flex:"1"}},
+            ce("div",{style:{fontWeight:700,fontSize:"13px",lineHeight:"1.25"}},p.name),
+            ce("div",{style:{fontSize:"13px"}},ce("b",{style:{color:PINK}},fmt(p.price)),ce("span",{style:{fontSize:"11px",color:"#888",marginLeft:"6px"}},p.code?`cód. ${p.code}`:"")),
+            ce("div",{style:{fontSize:"11px",color:"#888"}},t.length?`Nº ${t.join(", ")}`:"sem numeração disponível"),
+            ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"auto",paddingTop:"6px"}},
+              ce("button",{class:"btn",style:sm("#e3f2fd","#1565c0"),onclick:()=>copiaTexto(legendaAtacado(p),"📋 Legenda copiada")},"Copiar legenda"),
+              ce("button",{class:"btn",style:sm("#e8f5e9","#2e7d32"),onclick:()=>compartilhaUm(p)},"Compartilhar"))));
+      })));
 }
 
 // ─── PAINEL DO AFILIADO: desempenho do link e material de divulgação ─────────
