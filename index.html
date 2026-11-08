@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-07f";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-08a";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -2381,6 +2381,7 @@ function buildShare(){
         ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#f0f0f0","#1a1a2e"),onclick:()=>baixaFotos(escolhidos)},"⬇ Baixar fotos"),
         ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#ffebee","#c62828"),onclick:()=>{sel.length=0;render();}},"Limpar")),
       abertura),
+    buildPdfCard(escolhidos,todos),
     ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",margin:"4px 0 12px"}},
       ce("label",{style:{display:"flex",gap:"6px",alignItems:"center",fontSize:"13px",fontWeight:600,cursor:"pointer"}},
         ce("input",{type:"checkbox",checked:todosVis,onchange:e=>{lista.forEach(p=>marca(p,e.target.checked));render();}}),"Selecionar todos da lista"),
@@ -2410,6 +2411,154 @@ function buildShare(){
               ce("button",{class:"btn",style:sm("#e3f2fd","#1565c0"),onclick:()=>copiaTexto(legendaAtacado(p),"📋 Legenda copiada")},"Copiar legenda"),
               ce("button",{class:"btn",style:sm("#e8f5e9","#2e7d32"),onclick:()=>compartilhaUm(p)},"Compartilhar"))));
       })));
+}
+
+// ─── CATÁLOGO EM PDF (gerado no navegador, sem servidor) ─────────────────────
+function carregaJsPDF(){
+  if(window.jspdf) return Promise.resolve();
+  if(window._pdfP) return window._pdfP;
+  return window._pdfP=new Promise((ok,no)=>{ const sc=document.createElement("script");
+    sc.src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"; sc.onload=ok; sc.onerror=()=>{window._pdfP=null;no();}; document.head.appendChild(sc); });
+}
+// foto quadrada (recorte central) em JPEG leve, para o PDF não ficar pesado
+async function fotoQuadrada(url,px=520,ratio=1){
+  if(!url) return null;
+  try{
+    const b=await (await fetch(url,{mode:"cors"})).blob();
+    const bmp=await createImageBitmap(b);
+    const c=document.createElement("canvas"); c.width=px; c.height=Math.round(px*ratio);   // ratio = altura/largura
+    const g=c.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,c.width,c.height);
+    let sw=bmp.width, sh=sw*ratio; if(sh>bmp.height){ sh=bmp.height; sw=sh/ratio; }
+    g.drawImage(bmp,(bmp.width-sw)/2,(bmp.height-sh)/2,sw,sh,0,0,c.width,c.height);
+    return c.toDataURL("image/jpeg",0.78);
+  }catch(e){ return null; }
+}
+function pdfProdutos(escolhidos,todos,o){
+  let l=(o.origem==="sel"&&escolhidos.length?escolhidos:todos.filter(p=>tamsDe(p).length>0)).slice();
+  if(o.preco==="varejo") l=l.filter(p=>(+p.varejo||0)>0);
+  if(o.genero) l=l.filter(p=>p.gender===o.genero);
+  if(o.tam) l=l.filter(p=>(+((p.stock||{})[o.tam])||0)>0);
+  if(o.origem!=="sel") l.sort((a,b)=>(b.featured?1:0)-(a.featured?1:0)||String(a.name).localeCompare(String(b.name)));
+  return l;
+}
+async function geraCatalogoPDF(lista,o,progresso){
+  await carregaJsPDF();
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:"mm",format:"a4"});
+  const W=210,H=297,M=10, ROSA=[233,30,140], ESC=[26,26,46], CINZA=[110,110,120];
+  const hoje=new Date().toLocaleDateString("pt-BR");
+  const waFmt=phoneFmt(WA.replace(/^55/,""));
+  const base=o.preco==="varejo"?`${CATALOG_URL}/varejo`:`${CATALOG_URL}/`;
+  const sep=base.includes("?")?"&":"?";
+  const IMG_R=52/((W-2*M-10)/3);
+  // fotos em paralelo (4 por vez)
+  const fotos=new Array(lista.length); let feitas=0;
+  for(let i=0;i<lista.length;i+=4){
+    await Promise.all(lista.slice(i,i+4).map(async(p,k)=>{ fotos[i+k]=await fotoQuadrada(p.image,520,IMG_R); feitas++; progresso&&progresso(feitas,lista.length); }));
+  }
+  const capa=()=>{
+    doc.setFillColor(...ESC); doc.rect(0,0,W,46,"F");
+    doc.setFillColor(...ROSA); doc.rect(0,46,W,1.6,"F");
+    doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(24);
+    doc.text("GLAMOUR SHOES",M,18);
+    doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.setTextColor(240,200,225);
+    doc.text(o.titulo||"Catálogo de calçados",M,26);
+    doc.setFontSize(9); doc.setTextColor(210,210,220);
+    doc.text(`Atualizado em ${hoje}  |  ${lista.length} produto${lista.length!==1?"s":""} disponíve${lista.length!==1?"is":"l"}`,M,33);
+    doc.text(`Pedidos pelo WhatsApp ${waFmt}`,M,39);
+    if(o.cliente){ doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(255,255,255);
+      doc.text(`Preparado para ${o.cliente}`,W-M,18,{align:"right"}); }
+    if(o.tam){ doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(240,200,225); doc.text(`Numeração ${o.tam}`,W-M,24,{align:"right"}); }
+    doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...CINZA);
+    doc.text("Toque na foto ou em \"Ver no site\" para abrir o produto e fazer o pedido.",M,54);
+    const wl=`https://wa.me/${WA}`; doc.setTextColor(...ROSA); doc.textWithLink("Falar no WhatsApp",W-M-30,54,{url:wl});
+    return 59;
+  };
+  const topo=()=>{
+    doc.setFillColor(...ESC); doc.rect(0,0,W,13,"F"); doc.setFillColor(...ROSA); doc.rect(0,13,W,0.8,"F");
+    doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.text("GLAMOUR SHOES",M,8.6);
+    doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(210,210,220);
+    doc.text(`${o.cliente?`Para ${o.cliente}  |  `:""}${hoje}`,W-M,8.6,{align:"right"});
+    return 19;
+  };
+  const COLS=3, GAP=5, CW=(W-2*M-GAP*(COLS-1))/COLS, IMG=52, CH=IMG+31;   // 3 x 3 por página
+  let y=capa(), col=0;
+  lista.forEach((p,i)=>{
+    if(col===0&&y+CH>H-14){ doc.addPage(); y=topo(); }
+    const x=M+col*(CW+GAP), url=`${base}${sep}p=${encodeURIComponent(p.id)}`;
+    doc.setDrawColor(235,225,232); doc.setFillColor(255,255,255); doc.roundedRect(x,y,CW,CH,2.5,2.5,"FD");
+    if(fotos[i]) doc.addImage(fotos[i],"JPEG",x+0.4,y+0.4,CW-0.8,IMG-0.8,undefined,"FAST");
+    else { doc.setFillColor(245,240,244); doc.rect(x+0.4,y+0.4,CW-0.8,IMG-0.8,"F"); doc.setTextColor(...CINZA); doc.setFontSize(8); doc.text("sem foto",x+CW/2,y+IMG/2,{align:"center"}); }
+    doc.link(x,y,CW,IMG,{url});
+    if(p.featured){ doc.setFillColor(...ROSA); doc.roundedRect(x+2,y+2,17,4.6,1.2,1.2,"F"); doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(6.2); doc.text("DESTAQUE",x+10.5,y+5.2,{align:"center"}); }
+    let ty=y+IMG+4.2;
+    doc.setTextColor(...ESC); doc.setFont("helvetica","bold"); doc.setFontSize(8.2);
+    const nome=doc.splitTextToSize(String(p.name||"").toUpperCase(),CW-4).slice(0,2);
+    doc.text(nome,x+2,ty); ty+=nome.length*3.4+1.2;
+    doc.setTextColor(...ROSA); doc.setFontSize(11);
+    if(o.preco==="ambos"){ doc.text(fmt(p.price),x+2,ty+1); if(+p.varejo>0){ doc.setFontSize(7); doc.setTextColor(...CINZA); doc.setFont("helvetica","normal"); doc.text(`varejo ${fmt(p.varejo)}`,x+CW-2,ty+1,{align:"right"}); } }
+    else doc.text(fmt(o.preco==="varejo"?p.varejo:p.price),x+2,ty+1);
+    ty+=5;
+    doc.setFont("helvetica","normal"); doc.setFontSize(7); doc.setTextColor(70,70,80);
+    const t=tamsDe(p); doc.text(doc.splitTextToSize(`Nº ${t.length?t.join(", "):"consulte"}`,CW-4).slice(0,1),x+2,ty); ty+=3.3;
+    const desc=String(p.desc||"").trim();
+    if(desc){ doc.setTextColor(...CINZA); doc.setFontSize(6.4); doc.text(doc.splitTextToSize(desc,CW-4).slice(0,2),x+2,ty); }
+    doc.setFont("helvetica","bold"); doc.setFontSize(7); doc.setTextColor(...ROSA);
+    doc.textWithLink("Ver no site >",x+2,y+CH-2.6,{url});
+    if(p.code){ doc.setFont("helvetica","normal"); doc.setTextColor(...CINZA); doc.text(`cód. ${p.code}`,x+CW-2,y+CH-2.6,{align:"right"}); }
+    col++; if(col===COLS){ col=0; y+=CH+GAP; }
+  });
+  const n=doc.getNumberOfPages();
+  for(let i=1;i<=n;i++){ doc.setPage(i); doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
+    doc.text(`Glamour Shoes  |  WhatsApp ${waFmt}  |  Preços e estoque sujeitos a alteração`,M,H-6);
+    doc.text(`${i}/${n}`,W-M,H-6,{align:"right"}); }
+  const slug=o.cliente?"-"+o.cliente.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/gi,"-").toLowerCase():"";
+  return {blob:doc.output("blob"),nome:`catalogo-glamour${slug}-${toDay()}.pdf`};
+}
+function buildPdfCard(escolhidos,todos){
+  if(!S.pdf) S.pdf={titulo:"Catálogo de calçados",cliente:"",preco:"atacado",origem:"todos",genero:"",tam:"",estado:"",prog:""};
+  const o=S.pdf;
+  if(o.origem==="sel"&&!escolhidos.length) o.origem="todos";
+  const qtd=pdfProdutos(escolhidos,todos,o).length;
+  const lbl=t=>ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",marginBottom:"4px"}},t);
+  const inp=(k,ph)=>{ const i=ce("input",{type:"text",class:"inp",placeholder:ph}); i.value=o[k]; i.addEventListener("input",e=>o[k]=e.target.value); return i; };
+  const selc=(k,opts)=>ce("select",{class:"inp",onchange:e=>{o[k]=e.target.value;o.estado="";o.arq=null;render();}},...opts.map(([v,l])=>ce("option",{value:v,...(o[k]===v?{selected:"selected"}:{})},l)));
+  const tamsAll=[...new Set(todos.flatMap(tamsDe))].sort((a,b)=>+a-+b);
+  const sm=(bg,c)=>({padding:"8px 14px",fontSize:"12px",background:bg,color:c});
+  const gerar=async()=>{
+    const lista=pdfProdutos(escolhidos,todos,o);
+    if(!lista.length) return toast("Nenhum produto com esses filtros.");
+    o.estado="gerando"; o.prog="Preparando..."; o.arq=null; render();
+    try{
+      const r=await geraCatalogoPDF(lista,o,(a,b)=>{ o.prog=`Carregando fotos ${a}/${b}`; const el=document.getElementById("pdf-prog"); if(el) el.textContent=o.prog; });
+      o.arq=r; o.estado="pronto"; toast("📄 Catálogo pronto!");
+    }catch(e){ o.estado=""; toast("⚠️ Não foi possível gerar o PDF. Verifique a internet.",4500); }
+    render();
+  };
+  const baixar=()=>{ const a=ce("a",{href:URL.createObjectURL(o.arq.blob),download:o.arq.nome}); document.body.appendChild(a); a.click(); a.remove(); };
+  const compartilhar=async()=>{
+    const f=new File([o.arq.blob],o.arq.nome,{type:"application/pdf"});
+    const txt=`${o.cliente?`Olá, ${o.cliente.split(" ")[0]}! `:""}Segue o catálogo atualizado da Glamour Shoes de hoje (${new Date().toLocaleDateString("pt-BR")}). É só tocar no produto para abrir no site. 💖`;
+    if(navigator.canShare&&navigator.canShare({files:[f]})){ try{ await navigator.share({files:[f],text:txt}); }catch(e){} }
+    else { baixar(); toast("PDF baixado. Anexe no WhatsApp Web.",4500); }
+  };
+  return ce("div",{class:"card",style:{borderLeft:`4px solid ${PINK}`}},
+    ce("div",{style:{fontWeight:700,fontSize:"15px",marginBottom:"4px"}},"📄 Catálogo em PDF"),
+    ce("p",{style:{fontSize:"12px",color:"#888",marginBottom:"12px"}},"Para clientes que não navegam no site: um PDF com foto, preço, numeração e descrição. Cada produto tem link para abrir direto no catálogo."),
+    ce("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:"10px"}},
+      ce("div",{},lbl("Título"),inp("titulo","Catálogo de calçados")),
+      ce("div",{},lbl("Nome da cliente (opcional)"),inp("cliente","Ex: Maria")),
+      ce("div",{},lbl("Preço"),selc("preco",[["atacado","Atacado (revendedoras)"],["varejo","Varejo (cliente final)"],["ambos","Atacado e varejo"]])),
+      ce("div",{},lbl("Produtos"),selc("origem",[["todos","Todos com estoque"],...(escolhidos.length?[["sel",`Só os ${escolhidos.length} selecionados`]]:[])])),
+      ce("div",{},lbl("Gênero"),selc("genero",[["","Todos"],["Feminino","Feminino"],["Masculino","Masculino"],["Infantil","Infantil"]])),
+      ce("div",{},lbl("Numeração da cliente"),selc("tam",[["","Todas"],...tamsAll.map(t=>[t,`Só nº ${t}`])]))),
+    ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",marginTop:"12px"}},
+      ce("button",{class:"btn",disabled:o.estado==="gerando"||!qtd,style:sm(PINK,"#fff"),onclick:gerar},o.estado==="gerando"?"Gerando...":`Gerar PDF (${qtd} produto${qtd!==1?"s":""})`),
+      o.estado==="gerando"?ce("span",{id:"pdf-prog",style:{fontSize:"12px",color:"#888"}},o.prog):null,
+      o.estado==="pronto"&&o.arq?ce("button",{class:"btn",style:sm("#e8f5e9","#2e7d32"),onclick:compartilhar},"📤 Enviar no WhatsApp"):null,
+      o.estado==="pronto"&&o.arq?ce("button",{class:"btn",style:sm("#e3f2fd","#1565c0"),onclick:baixar},"⬇ Baixar PDF"):null,
+      o.estado==="pronto"&&o.arq?ce("button",{class:"btn",style:sm("#f0f0f0","#1a1a2e"),onclick:()=>window.open(URL.createObjectURL(o.arq.blob),"_blank")},"Ver"):null,
+      o.estado==="pronto"&&o.arq?ce("span",{style:{fontSize:"11px",color:"#888"}},`${o.arq.nome} • ${o.arq.blob.size<1048576?Math.round(o.arq.blob.size/1024)+" KB":(o.arq.blob.size/1048576).toFixed(1).replace(".",",")+" MB"}`):null));
 }
 
 // ─── PAINEL DO AFILIADO: desempenho do link e material de divulgação ─────────
