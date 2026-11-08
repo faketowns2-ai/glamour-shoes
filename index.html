@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-08a";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-08b";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -263,8 +263,17 @@ const S={
 // JSON da coluna stock (chave "_oculto"). Ao carregar, ele vira p.hidden.
 // O preço de varejo vem da coluna "varejo" da planilha e também é guardado como
 // "_varejo" no JSON de estoque (funciona mesmo antes da coluna existir).
+// Link da foto limpo: quando se cola o "código de incorporação" do ImgBB vem junto
+// lixo como  " alt="...  ou <img src=...>. Fica só a URL.
+function limpaFoto(u){
+  let s=String(u||"").trim();
+  const all=s.match(/https?:\/\/[^\s"'<>]+/gi)||[];
+  return all.find(x=>/\.(jpe?g|png|webp|gif|avif)(\?|$)/i.test(x)||/^https?:\/\/i\.ibb\.co\//i.test(x))||all[0]||s;
+}
 function normProd(p){
-  if(!p||!p.stock) return p;
+  if(!p) return p;
+  if(p.image) p.image=limpaFoto(p.image);
+  if(!p.stock) return p;
   const st={...p.stock};
   if("_oculto" in st){ p.hidden=!!st._oculto; delete st._oculto; }
   if("_varejo" in st){ const v=+st._varejo||0; delete st._varejo; if(!(+p.varejo>0)) p.varejo=v; }
@@ -1870,7 +1879,7 @@ function buildProds(){
             const{id,code,gender,name,desc,price,cost,varejo,image,featured,stock}=S.pForm;
             if(!name||!price||!cost) return toast("Nome, preço e custo são obrigatórios!");
             if(!Object.keys(stock).length) return toast("Selecione ao menos um número!");
-            const img=String(image||"").trim();
+            const img=limpaFoto(image);
             if(img&&(!/^https?:\/\//i.test(img)||img.length>1500)) return toast("Link da foto inválido. Use o link direto do ImgBB (https://i.ibb.co/...).",5000);
             if(/^https?:\/\/(www\.)?ibb\.co\//i.test(img)) return toast("Esse é o link da página do ImgBB, não da foto. No ImgBB, em Códigos de incorporação, escolha \"Links diretos\" e copie o link que começa com https://i.ibb.co/",8000);
             const prod={code,gender,name,desc,price:+price,cost:+cost,varejo:+varejo||0,image:img,featured,stock};
