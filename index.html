@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-08b";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-08c";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -2505,7 +2505,8 @@ async function geraCatalogoPDF(lista,o,progresso){
     const nome=doc.splitTextToSize(String(p.name||"").toUpperCase(),CW-4).slice(0,2);
     doc.text(nome,x+2,ty); ty+=nome.length*3.4+1.2;
     doc.setTextColor(...ROSA); doc.setFontSize(11);
-    if(o.preco==="ambos"){ doc.text(fmt(p.price),x+2,ty+1); if(+p.varejo>0){ doc.setFontSize(7); doc.setTextColor(...CINZA); doc.setFont("helvetica","normal"); doc.text(`varejo ${fmt(p.varejo)}`,x+CW-2,ty+1,{align:"right"}); } }
+    if(o.preco==="sem"){ ty-=5; }
+    else if(o.preco==="ambos"){ doc.text(fmt(p.price),x+2,ty+1); if(+p.varejo>0){ doc.setFontSize(7); doc.setTextColor(...CINZA); doc.setFont("helvetica","normal"); doc.text(`varejo ${fmt(p.varejo)}`,x+CW-2,ty+1,{align:"right"}); } }
     else doc.text(fmt(o.preco==="varejo"?p.varejo:p.price),x+2,ty+1);
     ty+=5;
     doc.setFont("helvetica","normal"); doc.setFontSize(7); doc.setTextColor(70,70,80);
@@ -2557,7 +2558,7 @@ function buildPdfCard(escolhidos,todos){
     ce("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:"10px"}},
       ce("div",{},lbl("Título"),inp("titulo","Catálogo de calçados")),
       ce("div",{},lbl("Nome da cliente (opcional)"),inp("cliente","Ex: Maria")),
-      ce("div",{},lbl("Preço"),selc("preco",[["atacado","Atacado (revendedoras)"],["varejo","Varejo (cliente final)"],["ambos","Atacado e varejo"]])),
+      ce("div",{},lbl("Preço"),selc("preco",[["atacado","Atacado (revendedoras)"],["varejo","Varejo (cliente final)"],["ambos","Atacado e varejo"],["sem","Sem preço"]])),
       ce("div",{},lbl("Produtos"),selc("origem",[["todos","Todos com estoque"],...(escolhidos.length?[["sel",`Só os ${escolhidos.length} selecionados`]]:[])])),
       ce("div",{},lbl("Gênero"),selc("genero",[["","Todos"],["Feminino","Feminino"],["Masculino","Masculino"],["Infantil","Infantil"]])),
       ce("div",{},lbl("Numeração da cliente"),selc("tam",[["","Todas"],...tamsAll.map(t=>[t,`Só nº ${t}`])]))),
