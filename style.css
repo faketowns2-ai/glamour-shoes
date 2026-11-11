@@ -242,3 +242,22 @@ body.adm a.adm-pill-btn:hover{color:#f6f3ff}
 @media(max-width:480px){ .adm-steps{grid-template-columns:repeat(2,minmax(0,1fr))} }
 .adm-muted{color:#a99fd0}
 .afi-qr{background:#fff!important;color:#120826;border-radius:14px;padding:10px;width:200px;height:200px;display:flex;align-items:center;justify-content:center;margin:0 auto}
+
+/* ══ PROMOÇÃO (atacado): selo na foto, preço riscado e filtro ══ */
+.promo-tag{position:absolute;left:10px;bottom:10px;z-index:1;background:linear-gradient(90deg,#ff3d00,#ff1744);color:#fff;
+  font-size:12px;font-weight:800;letter-spacing:.3px;padding:5px 12px;border-radius:20px;box-shadow:0 4px 14px rgba(255,23,68,.45);
+  animation:promoPulse 1.6s ease-in-out infinite}
+.promo-tag b{background:#fff;color:#ff1744;border-radius:10px;padding:1px 6px;margin-left:2px}
+@keyframes promoPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+@media (prefers-reduced-motion:reduce){.promo-tag{animation:none}}
+.promo-price{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin-bottom:10px}
+.promo-old{font-size:13px;color:#999;text-decoration:line-through;text-decoration-thickness:2px}
+.promo-new{font-size:20px;font-weight:900;color:#ff1744}
+.promo-save{flex-basis:100%;font-size:11px;font-weight:700;color:#2e7d32}
+.promo-chip{padding:6px 14px;border-radius:20px;border:2px solid #ff1744;background:#fff;color:#ff1744;font-weight:800;font-size:12px;cursor:pointer}
+.promo-chip.on{background:#ff1744;color:#fff}
+.bf .promo-old{color:var(--bf-muted)}
+.bf .promo-new{color:#ff5252}
+.bf .promo-save{color:#7ee787}
+.bf .promo-chip{background:transparent}
+.bf .promo-chip.on{background:#ff1744;color:#fff}
