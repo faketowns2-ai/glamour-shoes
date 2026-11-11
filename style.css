@@ -344,3 +344,5 @@ body.adm a.adm-pill-btn:hover{color:#f6f3ff}
 @media (max-width:600px){.bx-btn{width:100%}}
 .bf .bx-all{background:linear-gradient(135deg,#c9962e,#e6b655 55%,#f6dc95);color:#111;box-shadow:0 8px 24px rgba(230,182,85,.25)}
 .bf .bx-btn{background:#111;color:var(--bf-gold)}
+/* fotos preparadas: botão pronto para o toque final */
+.bx-btn.pronto,.baixar-btn.pronto{background:#2e7d32!important;color:#fff!important;border-color:#2e7d32!important;animation:bxPulse 1s ease-in-out infinite}
