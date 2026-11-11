@@ -628,31 +628,8 @@ function carregaJSZip(){
     sc.src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"; sc.onload=ok; sc.onerror=()=>{window._zipP=null;no();}; document.head.appendChild(sc); });
 }
 async function baixarTodasFotos(prods,btn){
-  const lista=[]; prods.forEach(p=>fotosDe(p).forEach((u,k,a)=>lista.push({p,u,k,n:a.length})));
-  if(!lista.length) return;
-  const txt=btn.textContent; btn.disabled=true;
-  const slug=t=>String(t||"foto").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/gi,"-").replace(/^-|-$/g,"").toLowerCase().slice(0,40)||"foto";
-  const files=[]; let feitos=0;
-  const um=async it=>{ try{ const b=await (await fetch(it.u,{mode:"cors"})).blob();
-      const ext=(b.type.split("/")[1]||"jpg").replace("jpeg","jpg");
-      files.push(new File([b],`${slug(it.p.name)}${it.n>1?"-"+(it.k+1):""}.${ext}`,{type:b.type||"image/jpeg"})); }catch(e){}
-    feitos++; btn.textContent=`Preparando ${feitos} de ${lista.length}...`; };
-  try{
-    for(let i=0;i<lista.length;i+=4) await Promise.all(lista.slice(i,i+4).map(um));   // 4 por vez
-    if(!files.length){ toast("Não foi possível baixar as fotos. Tente de novo.",4000); return; }
-    const toque=matchMedia("(pointer:coarse)").matches;
-    if(toque&&navigator.canShare&&navigator.canShare({files})){
-      btn.textContent="Escolha \"Salvar imagens\"";
-      try{ await navigator.share({files}); }catch(e){}               // celular: salva tudo na galeria
-    } else {
-      await carregaJSZip(); const zip=new JSZip(); const usados={};
-      files.forEach(f=>{ let n=f.name; if(usados[n]){ n=n.replace(/(\.\w+)$/,`-${++usados[f.name]}$1`); } else usados[n]=1; zip.file(n,f); });
-      const blob=await zip.generateAsync({type:"blob"});
-      const a=ce("a",{href:URL.createObjectURL(blob),download:`fotos-catalogo-${toDay()}.zip`}); document.body.appendChild(a); a.click(); a.remove();
-      toast(`${files.length} fotos baixadas em um arquivo .zip`,4000);
-    }
-  }catch(e){ toast("Erro ao preparar as fotos. Tente de novo.",4000); }
-  finally{ btn.disabled=false; btn.textContent=txt; }
+  const itens=[]; prods.forEach(p=>fotosDe(p).forEach((u,k,a)=>itens.push({u,nome:slugFoto(p.name)+(a.length>1?"-"+(k+1):"")})));
+  return entregaFotos(itens,btn,`fotos-catalogo-${toDay()}.zip`);
 }
 
 function catalogoBase(){ return S.products.filter(x=>!x.hidden&&priceOf(x)>0&&Object.keys(x.stock||{}).length>0); }
@@ -812,24 +789,66 @@ function buildGaleria(p,fotos){
 }
 // baixa as fotos limpas (sem legenda e sem link) para a revendedora postar
 async function baixarFotosProduto(p,btn){
-  const fotos=fotosDe(p); if(!fotos.length) return;
-  const txt=btn&&btn.textContent; if(btn){ btn.disabled=true; btn.textContent="Preparando..."; }
-  const nome=String(p.name||"foto").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/gi,"-").replace(/^-|-$/g,"").toLowerCase().slice(0,40)||"foto";
-  const files=[];
-  for(let k=0;k<fotos.length;k++){
-    try{ const b=await (await fetch(fotos[k],{mode:"cors"})).blob();
-      const ext=(b.type.split("/")[1]||"jpg").replace("jpeg","jpg");
-      files.push(new File([b],`${nome}${fotos.length>1?"-"+(k+1):""}.${ext}`,{type:b.type||"image/jpeg"})); }catch(e){}
+  const fotos=fotosDe(p);
+  const itens=fotos.map((u,k)=>({u,nome:slugFoto(p.name)+(fotos.length>1?"-"+(k+1):"")}));
+  return entregaFotos(itens,btn,`${slugFoto(p.name)}.zip`);
+}
+// ─── BAIXAR FOTOS: prepara (converte para JPG) e entrega ──────────────────────
+// Celular: abre o compartilhar ("Salvar imagens"). Se o navegador exigir um novo
+// toque (a preparação demorou), o botão vira "Toque para salvar" e o próximo toque entrega.
+// Computador: 1 foto baixa direto; várias vão em um .zip.
+function slugFoto(t){ return String(t||"foto").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/gi,"-").replace(/^-|-$/g,"").toLowerCase().slice(0,40)||"foto"; }
+async function paraJpg(blob){
+  if(blob.type==="image/jpeg") return blob;
+  try{
+    const bmp=await createImageBitmap(blob);
+    const c=document.createElement("canvas"); c.width=bmp.width; c.height=bmp.height;
+    const g=c.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,c.width,c.height); g.drawImage(bmp,0,0);
+    const out=await new Promise(ok=>c.toBlob(ok,"image/jpeg",0.92));
+    return out||blob;
+  }catch(e){ return blob; }
+}
+const ehCelular=()=>matchMedia("(pointer:coarse)").matches||/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+function baixaArquivo(blob,nome){ const url=URL.createObjectURL(blob); const a=ce("a",{href:url,download:nome}); document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),60000); }
+async function entregaFotos(itens,btn,nomeZip){
+  if(!itens.length) return;
+  if(btn._rotulo==null) btn._rotulo=btn.textContent;
+  const volta=()=>{ btn._arquivos=null; btn.disabled=false; btn.classList.remove("pronto"); btn.textContent=btn._rotulo; };
+  let files=btn._arquivos;
+  if(!files){
+    btn.disabled=true; files=[]; let feitos=0;
+    const nomes={};
+    const um=async it=>{ try{ const r=await fetch(it.u,{mode:"cors"}); if(!r.ok) throw 0;
+        const b=await paraJpg(await r.blob()); const ext=b.type==="image/jpeg"?"jpg":((b.type.split("/")[1]||"jpg").replace("jpeg","jpg"));
+        let n=`${it.nome}.${ext}`; if(nomes[n]) n=`${it.nome}-${++nomes[n]}.${ext}`; else nomes[n]=1;
+        files.push(new File([b],n,{type:b.type||"image/jpeg"})); }catch(e){}
+      feitos++; btn.textContent=itens.length>1?`Preparando ${feitos} de ${itens.length}...`:"Preparando..."; };
+    for(let i=0;i<itens.length;i+=4) await Promise.all(itens.slice(i,i+4).map(um));
+    btn.disabled=false;
+    if(!files.length){ volta(); toast("Não foi possível baixar as fotos. Verifique a internet e tente de novo.",5000); return; }
   }
   try{
-    const toque=matchMedia("(pointer:coarse)").matches;
-    if(files.length&&toque&&navigator.canShare&&navigator.canShare({files})){
-      try{ await navigator.share({files}); }catch(e){}            // no celular: "Salvar imagem" ou enviar direto
-    } else if(files.length){
-      for(const f of files){ const a=ce("a",{href:URL.createObjectURL(f),download:f.name}); document.body.appendChild(a); a.click(); a.remove(); await new Promise(r=>setTimeout(r,300)); }
-      toast(files.length>1?`${files.length} fotos baixadas`:"Foto baixada");
-    } else fotos.forEach(u=>window.open(u,"_blank"));
-  } finally { if(btn){ btn.disabled=false; btn.textContent=txt; } }
+    if(ehCelular()&&navigator.share&&navigator.canShare&&navigator.canShare({files})){
+      try{ await navigator.share({files}); volta(); }
+      catch(e){
+        if(e&&e.name==="AbortError"){ volta(); return; }                 // a pessoa fechou o compartilhar
+        // o navegador pede um toque novo: deixa as fotos prontas no botão
+        btn._arquivos=files; btn.classList.add("pronto");
+        btn.textContent=files.length>1?`Toque para salvar ${files.length} fotos`:"Toque para salvar a foto";
+        toast("Fotos prontas! Toque no botão de novo para salvar.",4000);
+      }
+      return;
+    }
+    if(files.length===1){ baixaArquivo(files[0],files[0].name); toast("Foto baixada"); volta(); return; }
+    if(ehCelular()){                                                  // celular sem compartilhar: baixa uma a uma
+      for(const f of files){ baixaArquivo(f,f.name); await new Promise(r=>setTimeout(r,400)); }
+      toast(`${files.length} fotos baixadas`,4000); volta(); return;
+    }
+    btn.textContent="Compactando..."; btn.disabled=true;
+    await carregaJSZip(); const zip=new JSZip(); files.forEach(f=>zip.file(f.name,f));
+    baixaArquivo(await zip.generateAsync({type:"blob"}),nomeZip);
+    toast(`${files.length} fotos baixadas em um arquivo .zip (veja em Downloads)`,5000); volta();
+  }catch(e){ volta(); toast("Erro ao preparar as fotos. Tente de novo.",4000); }
 }
 
 function addToCart(p,size,qty){
