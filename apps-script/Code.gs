@@ -254,7 +254,9 @@ return "";
 function isHidden_(prod) { return !!(prod.stock && prod.stock._oculto); }
 function unitPrice_(prod, mode) {
   if (mode === "varejo") return Number(prod.varejo) > 0 ? Number(prod.varejo) : (Number(prod.stock && prod.stock._varejo) || 0);
-  return Number(prod.price) || 0;
+  const base = Number(prod.price) || 0;
+  const promo = Number(prod.stock && prod.stock._promo) || 0;   // preço promocional de atacado
+  return promo > 0 && promo < base ? promo : base;
 }
 function round2_(v) { return Math.round(v * 100) / 100; }
 
