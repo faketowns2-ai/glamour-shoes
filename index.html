@@ -2399,13 +2399,19 @@ function buildAfiPanel(){
 // ─── COMPARTILHAR (ADMIN): divulgação em massa para o grupo de revendedores ──
 const tamsDe=p=>Object.keys(p.stock||{}).filter(k=>(+p.stock[k]||0)>0).sort((a,b)=>+a-+b);
 const linkProd=p=>`${CATALOG_URL}/?p=${encodeURIComponent(p.id)}`;
+// o que vai na legenda: escolhido na tela Compartilhar e lembrado neste aparelho
+const SH_CAMPOS=[["nome","Nome"],["preco","Preço"],["num","Numeração"],["link","Link do produto"],["desc","Descrição"]];
+function shCampos(){
+  if(!S.shCampos) S.shCampos=Object.assign({nome:true,preco:true,num:true,link:true,desc:true},lsGet("gs_sh_campos",{}));
+  return S.shCampos;
+}
 function legendaAtacado(p){
-  const t=tamsDe(p), desc=String(p.desc||"").trim();
-  return [`*${String(p.name||"").trim().toUpperCase()}*`,
-          `💰 Atacado: ${fmt(p.price)}`,
-          `📏 Numeração: ${t.length?t.join(", "):"consulte"}`,
-          `🛒 ${linkProd(p)}`,
-          desc?`📝 ${desc}`:null].filter(Boolean).join("\n");
+  const c=shCampos(), t=tamsDe(p), desc=String(p.desc||"").trim();
+  return [c.nome?`*${String(p.name||"").trim().toUpperCase()}*`:null,
+          c.preco?`💰 Atacado: ${fmt(p.price)}`:null,
+          c.num?`📏 Numeração: ${t.length?t.join(", "):"consulte"}`:null,
+          c.link?`🛒 ${linkProd(p)}`:null,
+          c.desc&&desc?`📝 ${desc}`:null].filter(Boolean).join("\n");
 }
 async function arquivoFoto(p){
   if(!p.image) return null;
@@ -2417,11 +2423,17 @@ async function arquivoFoto(p){
 async function copiaTexto(t,msg){ try{ await navigator.clipboard.writeText(t); toast(msg); return true; }catch(e){ prompt("Copie:",t); return false; } }
 async function compartilhaUm(p){
   const text=legendaAtacado(p);
-  await copiaTexto(text,"📋 Legenda copiada");          // se o app ignorar o texto, é só colar
+  if(text) await copiaTexto(text,"📋 Legenda copiada");  // se o app ignorar o texto, é só colar
   const f=await arquivoFoto(p);
-  if(navigator.share){
-    try{ await navigator.share(f&&navigator.canShare&&navigator.canShare({files:[f]})?{files:[f],text}:{text}); return true; }
+  const podeArquivo=f&&navigator.canShare&&navigator.canShare({files:[f]});
+  if(navigator.share&&(podeArquivo||text)){
+    try{ await navigator.share(podeArquivo?(text?{files:[f],text}:{files:[f]}):{text}); return true; }
     catch(e){ if(e&&e.name==="AbortError") return false; }
+  }
+  if(!text){ // sem legenda e o aparelho não compartilha arquivo: baixa a foto
+    if(f){ const a=ce("a",{href:URL.createObjectURL(f),download:f.name}); document.body.appendChild(a); a.click(); a.remove(); toast("⬇ Foto baixada"); }
+    else if(p.image) window.open(p.image,"_blank");
+    return true;
   }
   window.open(`https://wa.me/?text=${encodeURIComponent(text)}`,"_blank"); return true;
 }
@@ -2445,6 +2457,7 @@ function buildShare(){
   if(S.shBusca) lista=lista.filter(p=>(p.name+" "+(p.code||"")).toLowerCase().includes(S.shBusca.toLowerCase()));
   const escolhidos=sel.map(id=>todos.find(p=>String(p.id)===id)).filter(Boolean);
   const textoGrupo=()=>[S.shTexto.trim()||null,...escolhidos.map(legendaAtacado)].filter(Boolean).join("\n\n━━━━━━━━━━\n\n");
+  const campos=shCampos(), semLegenda=!SH_CAMPOS.some(([k])=>campos[k]);
   const marca=(p,on)=>{ const id=String(p.id), i=sel.indexOf(id); if(on&&i<0) sel.push(id); if(!on&&i>=0) sel.splice(i,1); };
   const sm=(bg,c)=>({padding:"6px 12px",fontSize:"11px",background:bg,color:c});
   if(S.shPasso!=null&&escolhidos.length){
@@ -2455,14 +2468,14 @@ function buildShare(){
       ce("h3",{style:{marginBottom:"14px",fontSize:"17px"}},`📣 Enviando ${i+1} de ${escolhidos.length}`),
       ce("div",{class:"card",style:{maxWidth:"520px",margin:"0 auto"}},
         ce("div",{style:{aspectRatio:"1/1",borderRadius:"16px",overflow:"hidden",background:"#eee",marginBottom:"12px"}},p.image?img:null),
-        ce("pre",{style:{whiteSpace:"pre-wrap",fontFamily:"inherit",fontSize:"13px",lineHeight:"1.5",background:"#f7f0f5",borderRadius:"12px",padding:"12px",marginBottom:"12px"}},legendaAtacado(p)),
+        ce("pre",{style:{whiteSpace:"pre-wrap",fontFamily:"inherit",fontSize:"13px",lineHeight:"1.5",background:"#f7f0f5",borderRadius:"12px",padding:"12px",marginBottom:"12px",color:legendaAtacado(p)?"inherit":"#999"}},legendaAtacado(p)||"Sem legenda: só a foto será enviada."),
         ce("button",{class:"btn",style:{width:"100%",padding:"12px 0",background:PINK,color:"#fff",marginBottom:"8px"},onclick:async()=>{
-          await compartilhaUm(p); if(i<escolhidos.length-1){ S.shPasso=i+1; render(); } }},"Compartilhar foto com legenda"),
+          await compartilhaUm(p); if(i<escolhidos.length-1){ S.shPasso=i+1; render(); } }},semLegenda?"Compartilhar só a foto":"Compartilhar foto com legenda"),
         ce("div",{style:{display:"flex",gap:"8px",justifyContent:"space-between"}},
           ce("button",{class:"btn",disabled:i===0,style:sm("#f0f0f0","#1a1a2e"),onclick:()=>{S.shPasso=i-1;render();}},"Anterior"),
           ce("button",{class:"btn",style:sm("#ffebee","#c62828"),onclick:()=>{S.shPasso=null;render();}},"Encerrar"),
           ce("button",{class:"btn",disabled:i>=escolhidos.length-1,style:sm("#f0f0f0","#1a1a2e"),onclick:()=>{S.shPasso=i+1;render();}},"Próximo"))),
-      ce("p",{style:{fontSize:"11px",color:"#888",textAlign:"center",marginTop:"8px"}},"A legenda também é copiada: se o WhatsApp não puxar o texto, é só colar na foto."));
+      ce("p",{style:{fontSize:"11px",color:"#888",textAlign:"center",marginTop:"8px"}},semLegenda?"Envio sem legenda: nenhuma informação da loja vai junto com a foto.":"A legenda também é copiada: se o WhatsApp não puxar o texto, é só colar na foto."));
   }
   const busca=ce("input",{type:"text",class:"inp",placeholder:"Buscar por nome ou código",style:{flex:"1 1 200px"}}); busca.value=S.shBusca||"";
   busca.addEventListener("input",e=>{S.shBusca=e.target.value;clearTimeout(window._shT);window._shT=setTimeout(()=>{render();const b=document.querySelector("#sh-busca");if(b){b.focus();b.setSelectionRange(b.value.length,b.value.length);}},250);});
@@ -2472,18 +2485,23 @@ function buildShare(){
   const todosVis=lista.length>0&&lista.every(p=>sel.includes(String(p.id)));
   return ce("div",{},
     ce("h3",{style:{marginBottom:"6px",fontSize:"17px"}},"📣 Compartilhar produtos"),
-    ce("p",{style:{fontSize:"13px",color:"#888",marginBottom:"14px"}},"Marque os produtos e envie para o grupo de revendedores. A legenda leva título, preço de atacado, numeração disponível, link do produto no catálogo e a descrição, quando houver."),
+    ce("p",{style:{fontSize:"13px",color:"#888",marginBottom:"14px"}},"Marque os produtos e envie para o grupo de revendedores. Escolha abaixo o que vai na legenda: desmarque preço e link para que a revendedora possa repassar a foto sem as informações da loja."),
     ce("div",{class:"card",style:{position:"sticky",top:"8px",zIndex:5}},
       ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",marginBottom:"10px"}},
         ce("b",{style:{fontSize:"14px"}},`${escolhidos.length} selecionado${escolhidos.length!==1?"s":""}`),
         ce("span",{style:{flex:"1"}}),
-        ce("button",{class:"btn",disabled:!escolhidos.length,style:sm(PINK,"#fff"),onclick:()=>{S.shPasso=0;render();window.scrollTo(0,0);}},"📤 Enviar um por um (foto + legenda)"),
-        ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#e3f2fd","#1565c0"),onclick:()=>copiaTexto(textoGrupo(),`📋 ${escolhidos.length} legenda${escolhidos.length>1?"s":""} copiada${escolhidos.length>1?"s":""}`)},"Copiar todas as legendas"),
-        ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#e8f5e9","#2e7d32"),onclick:()=>{
+        ce("button",{class:"btn",disabled:!escolhidos.length,style:sm(PINK,"#fff"),onclick:()=>{S.shPasso=0;render();window.scrollTo(0,0);}},semLegenda?"📤 Enviar um por um (só foto)":"📤 Enviar um por um (foto + legenda)"),
+        ce("button",{class:"btn",disabled:!escolhidos.length||semLegenda,style:sm("#e3f2fd","#1565c0"),onclick:()=>copiaTexto(textoGrupo(),`📋 ${escolhidos.length} legenda${escolhidos.length>1?"s":""} copiada${escolhidos.length>1?"s":""}`)},"Copiar todas as legendas"),
+        ce("button",{class:"btn",disabled:!escolhidos.length||semLegenda,style:sm("#e8f5e9","#2e7d32"),onclick:()=>{
           const t=textoGrupo(); if(t.length>6000&&!confirm("Mensagem grande: o WhatsApp pode cortar. Continuar?")) return;
           window.open(`https://wa.me/?text=${encodeURIComponent(t)}`,"_blank"); }},"WhatsApp (só texto)"),
         ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#f0f0f0","#1a1a2e"),onclick:()=>baixaFotos(escolhidos)},"⬇ Baixar fotos"),
         ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#ffebee","#c62828"),onclick:()=>{sel.length=0;render();}},"Limpar")),
+      ce("div",{style:{display:"flex",gap:"6px 14px",flexWrap:"wrap",alignItems:"center",marginBottom:"10px",fontSize:"12px"}},
+        ce("b",{style:{fontSize:"12px"}},"Legenda leva:"),
+        ...SH_CAMPOS.map(([k,l])=>ce("label",{style:{display:"flex",gap:"5px",alignItems:"center",cursor:"pointer"}},
+          ce("input",{type:"checkbox",checked:!!campos[k],onchange:e=>{campos[k]=e.target.checked;lsSet("gs_sh_campos",campos);render();}}),l)),
+        semLegenda?ce("span",{style:{color:"#c62828",fontWeight:600}},"Só a foto, sem legenda"):null),
       abertura),
     buildPdfCard(escolhidos,todos),
     ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",margin:"4px 0 12px"}},
@@ -2512,7 +2530,7 @@ function buildShare(){
             ce("div",{style:{fontSize:"13px"}},ce("b",{style:{color:PINK}},fmt(p.price)),ce("span",{style:{fontSize:"11px",color:"#888",marginLeft:"6px"}},p.code?`cód. ${p.code}`:"")),
             ce("div",{style:{fontSize:"11px",color:"#888"}},t.length?`Nº ${t.join(", ")}`:"sem numeração disponível"),
             ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"auto",paddingTop:"6px"}},
-              ce("button",{class:"btn",style:sm("#e3f2fd","#1565c0"),onclick:()=>copiaTexto(legendaAtacado(p),"📋 Legenda copiada")},"Copiar legenda"),
+              semLegenda?null:ce("button",{class:"btn",style:sm("#e3f2fd","#1565c0"),onclick:()=>copiaTexto(legendaAtacado(p),"📋 Legenda copiada")},"Copiar legenda"),
               ce("button",{class:"btn",style:sm("#e8f5e9","#2e7d32"),onclick:()=>compartilhaUm(p)},"Compartilhar"))));
       })));
 }
