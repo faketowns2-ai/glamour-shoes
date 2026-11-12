@@ -273,9 +273,9 @@ const S={
 // Também remove caracteres invisíveis (ex.: "word joiner" U+2060, espaço de largura
 // zero, BOM) que o celular/WhatsApp gruda no fim do link ao copiar: com eles a foto
 // abre no catálogo mas falha ao compartilhar/baixar, porque o link vira outro arquivo.
-const _INVISIVEIS=new RegExp("["+[[0x00,0x1F],[0x7F,0xA0],[0xAD],[0x34F],[0x61C],[0x115F,0x1160],[0x17B4,0x17B5],[0x180B,0x180F],[0x2000,0x200F],[0x2028,0x202F],[0x205F,0x206F],[0x3000],[0x3164],[0xFE00,0xFE0F],[0xFEFF],[0xFFA0],[0xFFF0,0xFFFF]].map(([a,b])=>b?String.fromCharCode(a)+"-"+String.fromCharCode(b):String.fromCharCode(a)).join("")+"]","g");
+function _invisiveis(){ return new RegExp("["+[[0x00,0x1F],[0x7F,0xA0],[0xAD],[0x34F],[0x61C],[0x115F,0x1160],[0x17B4,0x17B5],[0x180B,0x180F],[0x2000,0x200F],[0x2028,0x202F],[0x205F,0x206F],[0x3000],[0x3164],[0xFE00,0xFE0F],[0xFEFF],[0xFFA0],[0xFFF0,0xFFFF]].map(([a,b])=>b?String.fromCharCode(a)+"-"+String.fromCharCode(b):String.fromCharCode(a)).join("")+"]","g"); } // função (não const): é usada antes desta linha, ao carregar S
 function limpaFoto(u){
-  let s=String(u||"").replace(_INVISIVEIS,"").trim();
+  let s=String(u||"").replace(_invisiveis(),"").trim();
   const all=s.match(/https?:\/\/[^\s"'<>]+/gi)||[];
   return all.find(x=>/\.(jpe?g|png|webp|gif|avif)(\?|$)/i.test(x)||/^https?:\/\/i\.ibb\.co\//i.test(x))||all[0]||s;
 }
