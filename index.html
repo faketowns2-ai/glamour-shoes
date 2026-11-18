@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-12a";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-18a";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -2659,6 +2659,46 @@ async function baixaFotos(lista){
   }
   toast(ok?`⬇ ${ok} foto${ok>1?"s":""} baixada${ok>1?"s":""}`:"Fotos abertas em novas abas",3500);
 }
+// ===== ORDEM DE COMPARTILHAMENTO =====
+const SH_ORDENS=[
+  ["selecao","Na ordem em que marquei"],
+  ["az","Alfabética (A a Z)"],
+  ["za","Alfabética (Z a A)"],
+  ["novos","Novidades primeiro"],
+  ["destaque","Destaques primeiro"],
+  ["promo","Promoções primeiro (maior desconto)"],
+  ["menor","Menor preço primeiro"],
+  ["maior","Maior preço primeiro"],
+  ["grade","Mais numerações disponíveis primeiro"],
+  ["codigo","Por código (crescente)"],
+  ["genero","Por gênero (Feminino, Masculino, Infantil)"]
+];
+function shOrdem(){
+  if(!S.shOrdem) S.shOrdem=lsGet("gs_sh_ordem","selecao")||"selecao";
+  return S.shOrdem;
+}
+function ordenaShare(arr){
+  const o=shOrdem(); if(o==="selecao") return arr;
+  const pos=p=>S.products.indexOf(p);
+  const preco=p=>{const pr=+p.price||0, pm=+p.promo||0; return pm>0&&pm<pr?pm:pr;};
+  const desc=p=>{const pr=+p.price||0, pm=+p.promo||0; return pm>0&&pm<pr?(pr-pm)/pr:0;};
+  const nome=(a,b)=>String(a.name||"").localeCompare(String(b.name||""),"pt-BR",{sensitivity:"base",numeric:true});
+  const cod=(a,b)=>String(a.code||a.id||"").localeCompare(String(b.code||b.id||""),"pt-BR",{numeric:true});
+  const GEN={Feminino:0,Masculino:1,Infantil:2};
+  const cmp={
+    az:nome,
+    za:(a,b)=>nome(b,a),
+    novos:(a,b)=>pos(b)-pos(a)||cod(b,a),
+    destaque:(a,b)=>(!!b.featured-!!a.featured)||(pos(b)-pos(a)),
+    promo:(a,b)=>desc(b)-desc(a)||nome(a,b),
+    menor:(a,b)=>preco(a)-preco(b)||nome(a,b),
+    maior:(a,b)=>preco(b)-preco(a)||nome(a,b),
+    grade:(a,b)=>tamsDe(b).length-tamsDe(a).length||nome(a,b),
+    codigo:cod,
+    genero:(a,b)=>((GEN[a.gender]??9)-(GEN[b.gender]??9))||nome(a,b)
+  }[o];
+  return cmp?arr.slice().sort(cmp):arr;
+}
 function buildShare(){
   if(!S.shSel) S.shSel=[];                       // ids na ordem em que foram marcados
   if(S.shTexto===undefined) S.shTexto="";
@@ -2668,7 +2708,8 @@ function buildShare(){
   let lista=todos.filter(p=>!S.shSoEstoque||tamsDe(p).length>0);
   if(S.shGen) lista=lista.filter(p=>p.gender===S.shGen);
   if(S.shBusca) lista=lista.filter(p=>(p.name+" "+(p.code||"")).toLowerCase().includes(S.shBusca.toLowerCase()));
-  const escolhidos=sel.map(id=>todos.find(p=>String(p.id)===id)).filter(Boolean);
+  lista=ordenaShare(lista);
+  const escolhidos=ordenaShare(sel.map(id=>todos.find(p=>String(p.id)===id)).filter(Boolean));
   const textoGrupo=()=>[S.shTexto.trim()||null,...escolhidos.map(legendaAtacado)].filter(Boolean).join("\n\n━━━━━━━━━━\n\n");
   const campos=shCampos(), semLegenda=!SH_CAMPOS.some(([k])=>campos[k]);
   const marca=(p,on)=>{ const id=String(p.id), i=sel.indexOf(id); if(on&&i<0) sel.push(id); if(!on&&i>=0) sel.splice(i,1); };
@@ -2699,7 +2740,7 @@ function buildShare(){
   return ce("div",{},
     ce("h3",{style:{marginBottom:"6px",fontSize:"17px"}},"📣 Compartilhar produtos"),
     ce("p",{style:{fontSize:"13px",color:"#888",marginBottom:"14px"}},"Marque os produtos e envie para o grupo de revendedores. Escolha abaixo o que vai na legenda: desmarque preço e link para que a revendedora possa repassar a foto sem as informações da loja."),
-    ce("div",{class:"card",style:{position:"sticky",top:"8px",zIndex:5}},
+    ce("div",{class:"card",style:{position:"sticky",top:(((document.querySelector(".adm-header")||{}).offsetHeight||0)+8)+"px",zIndex:5,background:"rgba(18,8,38,.94)",backdropFilter:"blur(14px)",WebkitBackdropFilter:"blur(14px)"}},
       ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",marginBottom:"10px"}},
         ce("b",{style:{fontSize:"14px"}},`${escolhidos.length} selecionado${escolhidos.length!==1?"s":""}`),
         ce("span",{style:{flex:"1"}}),
@@ -2709,12 +2750,16 @@ function buildShare(){
           const t=textoGrupo(); if(t.length>6000&&!confirm("Mensagem grande: o WhatsApp pode cortar. Continuar?")) return;
           window.open(`https://wa.me/?text=${encodeURIComponent(t)}`,"_blank"); }},"WhatsApp (só texto)"),
         ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#f0f0f0","#1a1a2e"),onclick:()=>baixaFotos(escolhidos)},"⬇ Baixar fotos"),
-        ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#ffebee","#c62828"),onclick:()=>{sel.length=0;render();}},"Limpar")),
+        ce("button",{class:"btn",disabled:!escolhidos.length,style:sm("#ffebee","#c62828"),onclick:()=>{sel.length=0;render();}},"Limpar"))),
+    ce("div",{class:"card",style:{marginBottom:"12px"}},
       ce("div",{style:{display:"flex",gap:"6px 14px",flexWrap:"wrap",alignItems:"center",marginBottom:"10px",fontSize:"12px"}},
         ce("b",{style:{fontSize:"12px"}},"Legenda leva:"),
         ...SH_CAMPOS.map(([k,l])=>ce("label",{style:{display:"flex",gap:"5px",alignItems:"center",cursor:"pointer"}},
           ce("input",{type:"checkbox",checked:!!campos[k],onchange:e=>{campos[k]=e.target.checked;lsSet("gs_sh_campos",campos);render();}}),l)),
         semLegenda?ce("span",{style:{color:"#c62828",fontWeight:600}},"Só a foto, sem legenda"):null),
+      ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",marginBottom:"10px",fontSize:"12px"}},
+        ce("b",{style:{fontSize:"12px"}},"Ordem de envio:"),
+        (()=>{const s=ce("select",{style:{padding:"6px 10px",borderRadius:"10px",border:"1px solid #e3cfdc",fontSize:"13px",background:"#fff",cursor:"pointer"},onchange:e=>{S.shOrdem=e.target.value;lsSet("gs_sh_ordem",S.shOrdem);render();}},...SH_ORDENS.map(([v,l])=>ce("option",{value:v},l))); s.value=shOrdem(); return s;})()),
       abertura),
     buildPdfCard(escolhidos,todos),
     ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",margin:"4px 0 12px"}},
