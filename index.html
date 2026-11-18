@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-18a";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-18b";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -251,7 +251,7 @@ const S={
   orders:   lsGet("gs_ord",[]),
   crm: dedupeCRM(lsGet("gs_crm",[])),
   cart:[], sel:{},
-  fText:"", fGender:"", fSize:"", fPrice:"all", fSort:"featured",
+  fText:"", fGender:"", fSize:"", fPrice:"all", fSort:"",
   dFrom:monthRange(curMonth()).from, dTo:monthRange(curMonth()).to,
   cName:"", cPhone:"",
   pForm: blankForm(),
@@ -417,7 +417,7 @@ async function persistProducts(force=false){
   lsSet("gs_prod",S.products);
   const d=await _call({action:"saveProducts",products:prodsForSheet()});
   const ok=!!d.ok;
-  if(ok){ S.lastSync=nowStr(); lsSet("gs_lastsync",S.lastSync); S.lastError=""; }
+  if(ok){ S.pOrdemPend=false; S.pOrdemBkp=null; S.lastSync=nowStr(); lsSet("gs_lastsync",S.lastSync); S.lastError=""; }
   else S.lastError=d.auth===false?"sessão expirada, entre de novo no Admin":(d.error||"erro na planilha");
   if(force&&!ok) toast(`⚠️ Erro na planilha: ${S.lastError}`,5000);
   render(); return ok;
@@ -2204,6 +2204,7 @@ function buildProds(){
         f.id?ce("button",{class:"btn",style:{padding:"11px 18px",borderRadius:"30px",background:"#eee",color:"#1a1a2e"},
           onclick:()=>{S.pForm=blankForm();render();}},"Cancelar"):null)
     ),
+    buildOrdemCatalogo(),
     ce("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",marginBottom:"12px"}},
       ce("h3",{style:{fontSize:"15px"}},`Produtos Cadastrados (${S.products.filter(p=>p.hidden).length} ocultos)`),
       (()=>{
@@ -2212,7 +2213,8 @@ function buildProds(){
           onclick:()=>{ if(confirm(`Ocultar ${esg.length} produto(s) com estoque zerado?`)) setHidden(esg.map(p=>p.id),true); }},
           `🙈 Ocultar esgotados (${esg.length})`):null;
       })()),
-    ...S.products.map(p=>ce("div",{class:"card",style:{display:"flex",alignItems:"center",gap:"12px",flexWrap:"wrap",opacity:p.hidden?0.55:1}},
+    ...S.products.map((p,i)=>ce("div",{class:"card",style:{display:"flex",alignItems:"center",gap:"12px",flexWrap:"wrap",opacity:p.hidden?0.55:1}},
+      catSetas(p,i),
       ce("div",{style:{width:"48px",height:"48px",borderRadius:"8px",overflow:"hidden",background:"#eee",flexShrink:0}},
         p.image?ce("img",{src:p.image,alt:"",style:{width:"100%",height:"100%",objectFit:"cover"}}):ce("span",{style:{fontSize:"22px"}},"👠")),
       ce("div",{style:{flex:1}},
@@ -2659,7 +2661,7 @@ async function baixaFotos(lista){
   }
   toast(ok?`⬇ ${ok} foto${ok>1?"s":""} baixada${ok>1?"s":""}`:"Fotos abertas em novas abas",3500);
 }
-// ===== ORDEM DE COMPARTILHAMENTO =====
+// ===== ORDENAÇÃO DE PRODUTOS (Compartilhar + ordem do catálogo) =====
 const SH_ORDENS=[
   ["selecao","Na ordem em que marquei"],
   ["az","Alfabética (A a Z)"],
@@ -2673,31 +2675,104 @@ const SH_ORDENS=[
   ["codigo","Por código (crescente)"],
   ["genero","Por gênero (Feminino, Masculino, Infantil)"]
 ];
-function shOrdem(){
-  if(!S.shOrdem) S.shOrdem=lsGet("gs_sh_ordem","selecao")||"selecao";
-  return S.shOrdem;
-}
-function ordenaShare(arr){
-  const o=shOrdem(); if(o==="selecao") return arr;
-  const pos=p=>S.products.indexOf(p);
+const CAT_ORDENS=[
+  ["destaque","⭐ Destaques primeiro"],
+  ["promo","🔥 Promoções primeiro (maior desconto)"],
+  ["novos","🆕 Novidades primeiro"],
+  ["fem","👩 Feminino primeiro"],
+  ["masc","👨 Masculino primeiro"],
+  ["inf","🧒 Infantil primeiro"],
+  ["grade","📏 Mais numerações disponíveis primeiro"],
+  ["pares","📦 Mais pares em estoque primeiro"],
+  ["menor","💲 Menor preço primeiro"],
+  ["maior","💰 Maior preço primeiro"],
+  ["az","🔤 Alfabética (A a Z)"],
+  ["za","🔤 Alfabética (Z a A)"],
+  ["codigo","#️⃣ Por código (crescente)"],
+  ["esgfim","🙈 Esgotados e ocultos no final"]
+];
+// Ordenação estável: nos critérios de "prioridade" (destaque, promo, gênero...) o resto mantém a ordem atual,
+// então dá para combinar critérios aplicando um depois do outro.
+function ordenaProds(arr,o){
   const preco=p=>{const pr=+p.price||0, pm=+p.promo||0; return pm>0&&pm<pr?pm:pr;};
   const desc=p=>{const pr=+p.price||0, pm=+p.promo||0; return pm>0&&pm<pr?(pr-pm)/pr:0;};
   const nome=(a,b)=>String(a.name||"").localeCompare(String(b.name||""),"pt-BR",{sensitivity:"base",numeric:true});
   const cod=(a,b)=>String(a.code||a.id||"").localeCompare(String(b.code||b.id||""),"pt-BR",{numeric:true});
+  const ts=p=>+p.id>1e12?+p.id:0;                           // produtos novos têm id = data de cadastro
+  const pares=p=>Object.values(p.stock||{}).reduce((s,q)=>s+(+q||0),0);
+  const gen=g=>(a,b)=>(b.gender===g)-(a.gender===g);
   const GEN={Feminino:0,Masculino:1,Infantil:2};
   const cmp={
     az:nome,
     za:(a,b)=>nome(b,a),
-    novos:(a,b)=>pos(b)-pos(a)||cod(b,a),
-    destaque:(a,b)=>(!!b.featured-!!a.featured)||(pos(b)-pos(a)),
-    promo:(a,b)=>desc(b)-desc(a)||nome(a,b),
+    novos:(a,b)=>ts(b)-ts(a)||cod(b,a),
+    destaque:(a,b)=>!!b.featured-!!a.featured,
+    promo:(a,b)=>desc(b)-desc(a),
     menor:(a,b)=>preco(a)-preco(b)||nome(a,b),
     maior:(a,b)=>preco(b)-preco(a)||nome(a,b),
-    grade:(a,b)=>tamsDe(b).length-tamsDe(a).length||nome(a,b),
+    grade:(a,b)=>tamsDe(b).length-tamsDe(a).length,
+    pares:(a,b)=>pares(b)-pares(a),
     codigo:cod,
-    genero:(a,b)=>((GEN[a.gender]??9)-(GEN[b.gender]??9))||nome(a,b)
+    genero:(a,b)=>((GEN[a.gender]??9)-(GEN[b.gender]??9)),
+    fem:gen("Feminino"), masc:gen("Masculino"), inf:gen("Infantil"),
+    esgfim:(a,b)=>((!!a.hidden||pares(a)<=0)-(!!b.hidden||pares(b)<=0))
   }[o];
   return cmp?arr.slice().sort(cmp):arr;
+}
+function shOrdem(){
+  if(!S.shOrdem) S.shOrdem=lsGet("gs_sh_ordem","selecao")||"selecao";
+  return S.shOrdem;
+}
+function ordenaShare(arr){ const o=shOrdem(); return o==="selecao"?arr:ordenaProds(arr,o); }
+
+// ----- ordem do catálogo (aba PRODUTOS) -----
+function catMarca(){ if(!S.pOrdemBkp) S.pOrdemBkp=S.products.map(p=>String(p.id)); S.pOrdemPend=true; }
+function catAplica(o){ catMarca(); S.products=ordenaProds(S.products,o); lsSet("gs_prod",S.products); render(); }
+function catMove(id,para){
+  const i=S.products.findIndex(p=>String(p.id)===String(id)); if(i<0) return;
+  const n=para==="topo"?0:para==="fim"?S.products.length-1:Math.max(0,Math.min(S.products.length-1,i+para));
+  if(n===i) return;
+  catMarca(); const arr=S.products.slice(); const [p]=arr.splice(i,1); arr.splice(n,0,p); S.products=arr;
+  lsSet("gs_prod",S.products); render();
+}
+function catDesfaz(){
+  if(!S.pOrdemBkp) return;
+  const pos=new Map(S.pOrdemBkp.map((id,i)=>[id,i]));
+  S.products=S.products.slice().sort((a,b)=>(pos.get(String(a.id))??1e9)-(pos.get(String(b.id))??1e9));
+  S.pOrdemBkp=null; S.pOrdemPend=false; lsSet("gs_prod",S.products); render();
+}
+async function catSalva(){
+  const ok=await persistProducts(true);
+  if(ok){ S.pOrdemBkp=null; S.pOrdemPend=false; toast("✅ Nova ordem publicada no catálogo!"); render(); }
+}
+function buildOrdemCatalogo(){
+  if(!S.pOrdemSel) S.pOrdemSel="destaque";
+  const bt=(txt,bg,cor,fn,dis)=>ce("button",{disabled:!!dis,style:{padding:"7px 14px",fontSize:"12px",borderRadius:"20px",background:bg,color:cor,border:"none",fontWeight:700,cursor:dis?"default":"pointer",opacity:dis?0.5:1},onclick:fn},txt);
+  const sel=ce("select",{class:"inp",style:{flex:"1",minWidth:"220px",maxWidth:"360px"},onchange:e=>S.pOrdemSel=e.target.value},
+    ...CAT_ORDENS.map(([v,l])=>ce("option",{value:v},l)));
+  sel.value=S.pOrdemSel;
+  return ce("div",{class:"card",style:{marginBottom:"14px",border:S.pOrdemPend?"2px solid #ff9800":undefined}},
+    ce("div",{style:{fontWeight:800,fontSize:"14px",marginBottom:"4px"}},"🔀 Ordem do catálogo"),
+    ce("div",{style:{fontSize:"12px",color:"#888",marginBottom:"10px",lineHeight:"1.45"}},
+      "Os produtos aparecem no catálogo exatamente na ordem desta lista. Aplique um critério; para combinar, aplique outro em seguida (ex.: Promoções primeiro e depois Masculino primeiro, para uma campanha de Dia dos Pais). Ajuste fino com as setas de cada produto. Nada muda para as clientes até você salvar."),
+    ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}},
+      sel,
+      bt("Aplicar","#e91e63","#fff",()=>catAplica(S.pOrdemSel)),
+      bt(S.pOrdemSetas?"✋ Esconder setas":"✋ Ajustar à mão","#eceff1","#37474f",()=>{S.pOrdemSetas=!S.pOrdemSetas;render();})),
+    S.pOrdemPend?ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",marginTop:"10px",paddingTop:"10px",borderTop:"1px solid rgba(128,128,128,.25)"}},
+      ce("span",{style:{fontSize:"12px",fontWeight:700,color:"#ff9800",flex:"1",minWidth:"180px"}},"⚠️ Ordem alterada e ainda não publicada"),
+      bt("↩ Desfazer","#eceff1","#37474f",catDesfaz),
+      bt("💾 Salvar e publicar no catálogo","#2e7d32","#fff",catSalva)):null);
+}
+function catSetas(p,i){
+  if(!S.pOrdemSetas&&!S.pOrdemPend) return null;
+  const b=(txt,para,tit,dis)=>ce("button",{title:tit,disabled:dis,style:{width:"28px",height:"24px",padding:"0",fontSize:"12px",borderRadius:"6px",background:"#eceff1",color:"#37474f",border:"none",cursor:dis?"default":"pointer",opacity:dis?0.35:1},onclick:()=>catMove(p.id,para)},txt);
+  const ult=S.products.length-1;
+  return ce("div",{style:{display:"flex",alignItems:"center",gap:"4px",flexShrink:0}},
+    ce("b",{style:{minWidth:"26px",textAlign:"right",fontSize:"12px",color:"#888"}},`${i+1}º`),
+    ce("div",{style:{display:"grid",gridTemplateColumns:"28px 28px",gap:"3px"}},
+      b("⤒","topo","Levar para o topo",i===0), b("▲",-1,"Subir uma posição",i===0),
+      b("⤓","fim","Levar para o final",i===ult), b("▼",1,"Descer uma posição",i===ult)));
 }
 function buildShare(){
   if(!S.shSel) S.shSel=[];                       // ids na ordem em que foram marcados
