@@ -12,7 +12,7 @@ const crypto = require("crypto");
 
 const SITE = "https://glamour-shoes.vercel.app";
 const SCRIPT_URL_PADRAO = "https://script.google.com/macros/s/AKfycbw1Pdwu6HC8RzYZplOuhZtYw4kbVcLJPWG35DMElEKiLg4ckebqvRcUHfZMUh_zZu3k/exec";
-const VERSAO = "1.1.1";
+const VERSAO = "1.2.0";
 const GEN = ["Feminino", "Masculino", "Infantil"];
 
 // ─── datas no horário de Brasília ────────────────────────────────────────────
@@ -30,6 +30,9 @@ const momentoPedido = o => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return Date.parse(d + "T00:00:00-03:00");
   return new Date(d).getTime() || 0;
 };
+
+// etapa do pedido (o painel guarda _etapa dentro de pagamento)
+const etapa = o => o.status === "cancelled" ? "cancelado" : ["pronto", "finalizado"].includes((o.pagamento || {})._etapa) ? o.pagamento._etapa : o.pago ? "pago" : o.status === "confirmed" ? "confirmado" : "aguardando";
 
 // ─── acesso à planilha (Apps Script) ─────────────────────────────────────────
 let TOKEN = null;
@@ -289,7 +292,7 @@ const TOOLS = [
       if (a.dias) { const t = inicioDiaBR(a.dias); O = O.filter(o => momentoPedido(o) >= t); }
       if (a.busca) { const b = norm(a.busca), dg = String(a.busca).replace(/\D/g, ""); O = O.filter(o => norm(o.client).includes(b) || (dg.length >= 4 && String(o.phone).includes(dg))); }
       return { total: O.length, pedidos: O.slice(0, a.limite || 30).map(o => ({
-        id: o.id, data: o.dateStr || o.date, cliente: o.client, telefone: o.phone, status: o.status, pago: !!o.pago, total: brl(o.total),
+        id: o.id, data: o.dateStr || o.date, cliente: o.client, telefone: o.phone, status: o.status, pago: !!o.pago, etapa: etapa(o), total: brl(o.total),
         origem: o.origin, afiliada: o.ref || undefined, itens: (o.items || []).map(i => `${i.qty}x ${i.code || ""} ${String(i.name || "").trim()} nº ${i.size} (${brl(i.price)})`) })) };
     }
   },
@@ -327,8 +330,10 @@ const TOOLS = [
 
       const confirma = o.status === "pending" && (a.acao === "confirmar" || a.acao === "marcar_pago");
       const baixas = [];
+      const pg0 = o.pagamento || {};
+      const jaBaixou = pg0._estoque === undefined || pg0._estoque === "" ? o.status === "confirmed" : !!pg0._estoque;
       if (confirma) {
-        for (const it of o.items || []) {
+        if (!jaBaixou) for (const it of o.items || []) {
           const p = P.find(x => String(x.id) === String(it.pid || it.productId));
           if (!p) { avisos.push(`${it.name}: produto não existe mais no catálogo, estoque não baixado.`); continue; }
           p.stock = { ...(p.stock || {}) };
@@ -339,6 +344,7 @@ const TOOLS = [
           baixas.push(`${p.code} ${p.name.trim()} nº ${it.size}: ${tem} → ${p.stock[it.size]}`);
         }
         o.status = "confirmed";
+        o.pagamento = { ...(o.pagamento || {}), _estoque: true };
         const c = C.find(x => String(x.phone).replace(/\D/g, "") === String(o.phone).replace(/\D/g, ""));
         if (c) { c.orders = (+c.orders || 0) + 1; c.pending = Math.max(0, (+c.pending || 1) - 1); c.lastOrder = o.date; }
       }

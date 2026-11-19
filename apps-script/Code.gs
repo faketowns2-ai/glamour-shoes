@@ -287,19 +287,23 @@ function confirmPayment_(ss, p) {
   const totalCents = Math.round(order.total * 100);
   if (!(r.success && r.paid) || paidCents < totalCents) return { ok: true, paid: false };
 
-  // Pago: confirma, baixa estoque, calcula comissão, atualiza cliente
+  // Pago: confirma, baixa estoque (se o Admin ainda não baixou), calcula comissão, atualiza cliente
   const afi = order.ref ? loadAfiliados(ss).find(a => a.codigo === order.ref) : null;
+  const ant = order.pagamento || {};
+  const jaBaixou = ant._estoque === undefined || ant._estoque === "" ? order.status === "confirmed" : !!ant._estoque;
+  const jaConfirmado = order.status === "confirmed";
   order.status = "confirmed";
   order.pago = true;
   order.comissao = afi ? round2_(order.total * (Number(afi.comissao) || 0) / 100) : 0;
   order.pagamento = {
+    _estoque: true, _etapa: ant._etapa || "",
     transaction_nsu: tnsu, slug: slug, receipt_url: String(p.receipt_url || ""),
     metodo: String(r.capture_method || p.capture_method || ""), parcelas: Number(r.installments || 1),
     valorPago: paidCents / 100, pagoEm: Utilities.formatDate(new Date(), TZ, "dd/MM/yyyy, HH:mm:ss")
   };
   sh.getRange(rowIdx + 1, 1, 1, H_ORD.length).setValues([orderRow_(order)]);
-  decrementStock_(ss, order.items);
-  const crm = ss.getSheetByName("CRM");
+  if (!jaBaixou) decrementStock_(ss, order.items);
+  const crm = jaConfirmado ? null : ss.getSheetByName("CRM");
   if (crm) {
     const cr = crm.getDataRange().getValues();
     for (let i = 1; i < cr.length; i++) if (samePhone_(cr[i][2], order.phone)) {

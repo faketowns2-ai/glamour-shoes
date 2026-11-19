@@ -1217,11 +1217,17 @@ function buildAdmin(){
 
 // ─── ORDERS ──────────────────────────────────────────────────────────────────
 function buildOrders(){
+  const filtro=S.pedFiltro||"todos";
+  const cont=k=>S.orders.filter(o=>etapaPed(o)===k).length;
+  const lista=filtro==="todos"?S.orders:S.orders.filter(o=>etapaPed(o)===filtro);
   return ce("div",{},
-    ce("h3",{style:{marginBottom:"14px",fontSize:"17px"}},"Pedidos"),
-    S.orders.length===0?ce("div",{style:{color:"#aaa",padding:"30px 0",textAlign:"center"}},"Nenhum pedido ainda."):
-    ce("div",{},...S.orders.map(o=>{
-      const bc=o.status==="confirmed"?"#4caf50":o.status==="cancelled"?"#e53935":"#ff9800";
+    ce("h3",{style:{marginBottom:"10px",fontSize:"17px"}},"Pedidos"),
+    ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"14px"}},
+      ce("button",{class:"tab "+(filtro==="todos"?"on":"off"),onclick:()=>{S.pedFiltro="todos";render();}},`Todos (${S.orders.length})`),
+      ...ETAPAS.map(([k,l])=>{ const n=cont(k); return n||filtro===k?ce("button",{class:"tab "+(filtro===k?"on":"off"),onclick:()=>{S.pedFiltro=k;render();}},`${l} (${n})`):null; })),
+    lista.length===0?ce("div",{style:{color:"#aaa",padding:"30px 0",textAlign:"center"}},S.orders.length?"Nenhum pedido nesta etapa.":"Nenhum pedido ainda."):
+    ce("div",{},...lista.map(o=>{
+      const bc=(ETAPA_COR[etapaPed(o)]||ETAPA_COR.aguardando)[2];
       const isEditing=S._editingOrder===o.id;
       return ce("div",{class:"card",style:{borderLeft:`4px solid ${bc}`}},
         ce("div",{style:{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:"8px"}},
@@ -1253,16 +1259,17 @@ endBox(o),
             )
           ),
           ce("div",{style:{display:"flex",flexDirection:"column",gap:"6px",alignItems:"flex-end"}},
-            mkBadge(o.status),
+            mkEtapaBadge(o),
             ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#25d366",color:"#fff"},
               onclick:()=>openPedidoMsg(o)},"💬 WhatsApp"),
+            !isEditing?botoesEtapa(o):null,
             o.status==="pending"&&!isEditing?ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",justifyContent:"flex-end"}},
               ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#fff3e0",color:"#e65100",border:"1px solid #e65100"},
                 onclick:()=>{S._editingOrder=o.id;render();}},"✏️ Editar"),
               ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#4caf50",color:"#fff"},
-                onclick:()=>confirmOrder(o.id)},"Confirmar"),
+                onclick:()=>confirmOrder(o.id)},"Confirmar (baixa estoque)"),
               ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#e53935",color:"#fff"},
-                onclick:()=>{o.status="cancelled";persistOrders();render();}},"Cancelar")
+                onclick:()=>cancelaPedido(o)},"Cancelar")
             ):null
           )
         )
@@ -1322,7 +1329,8 @@ function pedidoTexto(o,tpl){
 function openPedidoMsg(o,tplId){
   const k=phoneKey(o.phone);
   if(!keyOk(k)) return toast("Telefone do cliente inválido ou sem DDD.");
-  const tpl=PED_TPLS.find(t=>t.id===tplId)||(o.pago?PED_TPLS[0]:PED_TPLS[1]);
+  const e=etapaPed(o), padrao=e==="pronto"?"retirada":e==="finalizado"?"livre":o.pago?"confirmado":"pagamento";
+  const tpl=PED_TPLS.find(t=>t.id===(tplId||padrao))||PED_TPLS[1];
   const ta=ce("textarea",{class:"inp",style:{width:"100%",resize:"vertical",lineHeight:"1.5",boxSizing:"border-box",marginBottom:"6px"}});
   ta.value=pedidoTexto(o,tpl); ta.rows=11;
   openModal(ce("div",{},
@@ -1419,6 +1427,72 @@ function buildOrderEditor(o){
   );
 }
 
+// ─── ETAPAS DO PEDIDO ─────────────────────────────────────────────────────────
+// status continua pending/confirmed/cancelled (faturamento, comissões e CRM usam isso).
+// A etapa fina e a marca de "estoque já baixado" ficam dentro de pagamento (_etapa, _estoque),
+// para não precisar de coluna nova na planilha.
+const ETAPAS=[["aguardando","⏳ Aguardando"],["confirmado","✅ Confirmado"],["pago","💳 Pago"],["pronto","📦 Pronto p/ retirada"],["finalizado","🏁 Finalizado"],["cancelado","❌ Cancelado"]];
+const ETAPA_COR={aguardando:["Aguardando confirmação","#fff3e0","#e65100"],confirmado:["Confirmado","#e8f5e9","#2e7d32"],
+  pago:["Pagamento confirmado","#e3f2fd","#1565c0"],pronto:["Pronto para entrega/retirada","#f3e5f5","#6a1b9a"],
+  finalizado:["Pedido finalizado","#eceff1","#37474f"],cancelado:["Cancelado","#ffebee","#c62828"]};
+function etapaPed(o){
+  if(o.status==="cancelled") return "cancelado";
+  const e=(o.pagamento||{})._etapa;
+  if(e==="finalizado"||e==="pronto") return e;
+  if(o.pago) return "pago";
+  return o.status==="confirmed"?"confirmado":"aguardando";
+}
+function mkEtapaBadge(o){ const[l,bg,c]=ETAPA_COR[etapaPed(o)]; return ce("span",{class:"badge",style:{background:bg,color:c}},l); }
+// pedidos antigos não têm a marca: confirmado = estoque já baixado
+function estoqueBaixado(o){ const v=(o.pagamento||{})._estoque; return v===undefined||v===""?o.status==="confirmed":!!v; }
+function mexeEstoque(o,sinal){ // sinal -1 baixa, +1 devolve
+  (o.items||[]).forEach(it=>{
+    const p=S.products.find(x=>String(x.id)===String(it.pid||it.productId));
+    if(p&&p.stock&&p.stock[it.size]!==undefined) p.stock[it.size]=Math.max(0,(+p.stock[it.size]||0)+sinal*(+it.qty||0));
+  });
+  o.pagamento={...(o.pagamento||{}),_estoque:sinal<0};
+}
+async function salvaPedido(o,msg,comEstoque){
+  lsSet("gs_ord",S.orders); if(comEstoque) lsSet("gs_prod",S.products); lsSet("gs_crm",S.crm);
+  S.syncing=true; render();
+  const ok=await _post(comEstoque?{action:"saveAll",products:prodsForSheet(),orders:S.orders,crm:S.crm}:{action:"saveOrders",orders:S.orders});
+  S.syncing=false; toast(ok?msg:"⚠️ Salvo neste aparelho. Erro na planilha.",ok?3000:5000); render(); return ok;
+}
+async function pedidoPago(o){
+  const forma=prompt("Pagamento recebido. Forma (pix, dinheiro, cartão):","pix"); if(forma===null) return;
+  let baixou=false;
+  if(o.status==="pending"){ if(!estoqueBaixado(o)){ mexeEstoque(o,-1); baixou=true; } o.status="confirmed";
+    const c=S.crm.find(x=>samePhone(x.phone,o.phone)); if(c){c.orders=(c.orders||0)+1;c.pending=Math.max(0,(c.pending||1)-1);c.lastOrder=o.date;} }
+  if(o.ref&&!(+o.comissao>0)){ const a=S.afiliados.find(x=>x.codigo===o.ref); if(a) o.comissao=Math.round(o.total*(+a.comissao||0))/100; }
+  o.pago=true;
+  o.pagamento={...(o.pagamento||{}),manual:true,metodo:forma.trim(),valorPago:+o.total||0,pagoEm:nowStr(),aguardando:false};
+  await salvaPedido(o,"💳 Pagamento confirmado!",baixou);
+}
+async function setEtapa(o,e){
+  if(e==="finalizado"&&!o.pago&&!confirm("Este pedido ainda não está marcado como pago. Finalizar mesmo assim?")) return;
+  let baixou=false;
+  if(o.status==="pending"){ if(!estoqueBaixado(o)){ mexeEstoque(o,-1); baixou=true; } o.status="confirmed"; }
+  o.pagamento={...(o.pagamento||{}),_etapa:e};
+  await salvaPedido(o,e==="pronto"?"📦 Pedido pronto para retirada!":"🏁 Pedido finalizado!",baixou);
+  if(e==="pronto"&&keyOk(phoneKey(o.phone))&&confirm("Avisar o cliente no WhatsApp que o pedido está pronto?")) openPedidoMsg(o,"retirada");
+}
+async function cancelaPedido(o){
+  const devolve=estoqueBaixado(o);
+  if(!confirm(devolve?"Cancelar este pedido? Os pares voltam para o estoque.":"Cancelar este pedido?")) return;
+  if(devolve) mexeEstoque(o,+1);
+  o.status="cancelled";
+  await salvaPedido(o,devolve?"Pedido cancelado. Estoque devolvido.":"Pedido cancelado.",devolve);
+}
+function botoesEtapa(o){
+  const e=etapaPed(o), b=(txt,bg,cor,fn)=>ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:bg,color:cor},onclick:fn},txt);
+  if(e==="aguardando"||e==="cancelado"||e==="finalizado") return null;
+  return ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",justifyContent:"flex-end"}},
+    !o.pago?b("💳 Pagamento confirmado","#1565c0","#fff",()=>pedidoPago(o)):null,
+    e!=="pronto"?b("📦 Pronto p/ retirada","#6a1b9a","#fff",()=>setEtapa(o,"pronto")):null,
+    b("🏁 Finalizar","#37474f","#fff",()=>setEtapa(o,"finalizado")),
+    !o.pago?b("Cancelar","#ffebee","#c62828",()=>cancelaPedido(o)):null);
+}
+
 function mkBadge(status){
   const M={confirmed:["Confirmado","#e8f5e9","#2e7d32"],cancelled:["Cancelado","#ffebee","#c62828"],pending:["Aguardando","#fff3e0","#e65100"]};
   const[label,bg,color]=M[status]||M.pending;
@@ -1428,10 +1502,7 @@ function mkBadge(status){
 async function confirmOrder(id){
   const o=S.orders.find(x=>x.id===id);
   if(!o||o.status!=="pending") return;
-  o.items.forEach(item=>{
-    const p=S.products.find(x=>x.id===item.pid||x.id===item.productId);
-    if(p&&p.stock[item.size]!==undefined) p.stock[item.size]=Math.max(0,(p.stock[item.size]||0)-item.qty);
-  });
+  if(!estoqueBaixado(o)) mexeEstoque(o,-1);
   o.status="confirmed";
   if(o.ref&&!o.comissao){ const a=S.afiliados.find(x=>x.codigo===o.ref); if(a) o.comissao=Math.round(o.total*(+a.comissao||0))/100; }
   const c=S.crm.find(x=>samePhone(x.phone,o.phone));
@@ -1762,7 +1833,7 @@ function openCRMDetail(c){
       ce("div",{},...clientOrders.map(o=>ce("div",{style:{borderLeft:`3px solid ${o.status==="confirmed"?"#4caf50":o.status==="cancelled"?"#e53935":"#ff9800"}`,
         paddingLeft:"12px",marginBottom:"12px"}},
         ce("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center"}},
-          ce("div",{style:{fontSize:"13px",fontWeight:600}},o.dateStr),mkBadge(o.status)),
+          ce("div",{style:{fontSize:"13px",fontWeight:600}},o.dateStr),mkEtapaBadge(o)),
         ...o.items.map(i=>ce("div",{style:{fontSize:"12px",color:"#666",marginTop:"2px"}},`• ${i.name} | Nº ${i.size} x${i.qty}`)),
         ce("div",{style:{fontWeight:700,color:PINK,fontSize:"13px",marginTop:"4px"}},fmt(o.total))))),
     ce("div",{style:{marginTop:"16px",fontWeight:700,fontSize:"13px",marginBottom:"10px"}},"Enviar mensagem:"),
