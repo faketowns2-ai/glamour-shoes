@@ -17,6 +17,7 @@ const H_SAQ  = ["id","codigo","nome","valor","pix","status","solicitadoEm","atua
 const DIAS_LIBERACAO = 1;   // comissão fica disponível para saque 1 dia depois da venda
 const SAQUE_MINIMO   = 10;  // R$
 const COMISSAO_PADRAO = 20; // % de quem se cadastra pelo link público (o Admin pode mudar em Afiliados)
+const RESERVA_HORAS  = 48;  // o pedido segura o estoque por este tempo; sem pagamento/confirmação, volta para o estoque
 
 function doGet(e)  { return handleRequest(e); }
 function doPost(e) { return handleRequest(e); }
@@ -41,6 +42,7 @@ function handleRequest(e) {
 
     switch (action) {
       case "load": {
+        expiraReservasCache_(ss);
         // Visitante não vê preço de custo, pedidos, clientes nem afiliados
         const prods = loadProducts(ss);
         const out = { ok: true, admin: admin, products: admin ? prods : prods.map(x => { const c = Object.assign({}, x); delete c.cost; return c; }) };
@@ -55,8 +57,12 @@ function handleRequest(e) {
         PropertiesService.getScriptProperties().setProperty("ADMIN_PASS", String(p.newPass));
         return json_({ ok: true });
       }
-      case "createOrder": return json_(withLock_(() => createOrder_(ss, p, false)));
-      case "checkout":    return json_(withLock_(() => createOrder_(ss, p, true)));
+      case "createOrder": return json_(withLock_(() => { expiraReservas_(ss); return createOrder_(ss, p, false); }));
+      case "checkout":    return json_(withLock_(() => { expiraReservas_(ss); return createOrder_(ss, p, true); }));
+      case "pedidoEstoque": {
+        if (!admin) return json_({ ok: false, auth: false, error: "Faça login novamente." });
+        return json_(withLock_(() => pedidoEstoque_(ss, p.id, p.acao)));
+      }
       case "confirm":
       case "webhook":     return json_(withLock_(() => confirmPayment_(ss, p)));
       case "lookupClient": return json_(lookupClient_(ss, p.phone));
@@ -84,8 +90,9 @@ function handleRequest(e) {
         if (!admin) return json_({ ok: false, auth: false, error: "Faça login novamente." });
         withLock_(() => {
           const arr = v => typeof v === "string" ? JSON.parse(v) : v;
-          if ((action === "saveProducts" || action === "saveAll") && p.products) saveProducts(ss, arr(p.products));
-          if ((action === "saveOrders"   || action === "saveAll") && p.orders)   saveOrders(ss, arr(p.orders));
+          if ((action === "saveProducts" || action === "saveAll") && p.products) saveProducts(ss, arr(p.products), p.base ? arr(p.base) : null);
+          // painel antigo manda produtos sem "base" e já mexeu no estoque sozinho: aí os pedidos não mexem de novo
+          if ((action === "saveOrders"   || action === "saveAll") && p.orders)   saveOrders(ss, arr(p.orders), !(p.products && !p.base));
           if ((action === "saveCRM"      || action === "saveAll") && p.crm)      saveCRM(ss, arr(p.crm));
           if ((action === "saveAfiliados"|| action === "saveAll") && p.afiliados) saveAfiliados(ss, arr(p.afiliados));
         });
@@ -230,9 +237,12 @@ res = UrlFetchApp.fetch("https://api.checkout.infinitepay.io/links", Object.assi
     order.pagamento = { link: url, aguardando: true };
   }
 
+  // Reserva: o estoque sai na hora do pedido e volta sozinho se não houver pagamento/confirmação no prazo
+  order.pagamento = Object.assign({}, order.pagamento, { _estoque: true, _reservaAte: now.getTime() + RESERVA_HORAS * 3600e3 });
   appendOrder_(ss, order);
+  mexeEstoque_(ss, order.items, -1);
   upsertCRM_(ss, order);
-  return { ok: true, id: order.id, total: total, url: url, ref: order.ref };
+  return { ok: true, id: order.id, total: total, url: url, ref: order.ref, reservaAte: order.pagamento._reservaAte, reservaHoras: RESERVA_HORAS };
 }
 
 // ── ENDEREÇO DE ENTREGA (informado pelo cliente no site) ───────────────────
@@ -276,7 +286,8 @@ function confirmPayment_(ss, p) {
   if (rowIdx < 0) return { ok: false, error: "Pedido não encontrado." };
   const order = rowToOrder_(hdr, rows[rowIdx]);
   if (order.pago) return { ok: true, paid: true, order: publicOrder_(order) };
-  if (order.status === "cancelled") return { ok: false, error: "Pedido cancelado." };
+  const expirado = !!(order.pagamento && order.pagamento._expirado);
+  if (order.status === "cancelled" && !expirado) return { ok: false, error: "Pedido cancelado." };
 
   const res = UrlFetchApp.fetch("https://api.checkout.infinitepay.io/payment_check", {
     method: "post", contentType: "application/json", muteHttpExceptions: true,
@@ -290,19 +301,19 @@ function confirmPayment_(ss, p) {
   // Pago: confirma, baixa estoque (se o Admin ainda não baixou), calcula comissão, atualiza cliente
   const afi = order.ref ? loadAfiliados(ss).find(a => a.codigo === order.ref) : null;
   const ant = order.pagamento || {};
-  const jaBaixou = ant._estoque === undefined || ant._estoque === "" ? order.status === "confirmed" : !!ant._estoque;
+  const jaBaixou = estoqueBaixado_(order);
   const jaConfirmado = order.status === "confirmed";
   order.status = "confirmed";
   order.pago = true;
   order.comissao = afi ? round2_(order.total * (Number(afi.comissao) || 0) / 100) : 0;
   order.pagamento = {
-    _estoque: true, _etapa: ant._etapa || "",
+    _estoque: true, _etapa: ant._etapa || "", _reaberto: expirado || undefined,
     transaction_nsu: tnsu, slug: slug, receipt_url: String(p.receipt_url || ""),
     metodo: String(r.capture_method || p.capture_method || ""), parcelas: Number(r.installments || 1),
     valorPago: paidCents / 100, pagoEm: Utilities.formatDate(new Date(), TZ, "dd/MM/yyyy, HH:mm:ss")
   };
   sh.getRange(rowIdx + 1, 1, 1, H_ORD.length).setValues([orderRow_(order)]);
-  if (!jaBaixou) decrementStock_(ss, order.items);
+  if (!jaBaixou) mexeEstoque_(ss, order.items, -1);
   const crm = jaConfirmado ? null : ss.getSheetByName("CRM");
   if (crm) {
     const cr = crm.getDataRange().getValues();
@@ -316,22 +327,101 @@ function confirmPayment_(ss, p) {
 function publicOrder_(o) {
   return { id: o.id, client: o.client, total: o.total, endereco: o.endereco || {}, items: o.items.map(i => ({ name: i.name, size: i.size, qty: i.qty, price: i.price })) };
 }
-function decrementStock_(ss, items) {
+// Ajusta o estoque na planilha. sinal -1 baixa, +1 devolve.
+function mexeEstoque_(ss, items, sinal) {
   const sh = ss.getSheetByName("Produtos");
   const rows = sh.getDataRange().getValues();
   const hdr = rows[0].map(h => String(h).trim().toLowerCase());
   const iId = hdr.indexOf("id"), iSt = hdr.indexOf("stock");
-  items.forEach(it => {
+  (items || []).forEach(it => {
     for (let i = 1; i < rows.length; i++) {
-      if (String(rows[i][iId]) !== String(it.pid)) continue;
+      if (String(rows[i][iId]) !== String(it.pid || it.productId)) continue;
       let st = {};
       try { st = typeof rows[i][iSt] === "string" ? JSON.parse(rows[i][iSt]) : (rows[i][iSt] || {}); } catch (x) {}
-      if (st[it.size] !== undefined) st[it.size] = Math.max(0, (Number(st[it.size]) || 0) - it.qty);
+      if (st[it.size] !== undefined) st[it.size] = Math.max(0, (Number(st[it.size]) || 0) + sinal * (Number(it.qty) || 0));
       rows[i][iSt] = JSON.stringify(st);
       sh.getRange(i + 1, iSt + 1).setValue(rows[i][iSt]);
       break;
     }
   });
+}
+// Pedidos antigos não têm a marca: confirmado = estoque já baixado
+function estoqueBaixado_(o) {
+  const v = (o.pagamento || {})._estoque;
+  return v === undefined || v === "" ? o.status === "confirmed" : !!v;
+}
+
+// ── RESERVA DE ESTOQUE (48 h) ────────────────────────────────────────────────
+function expiraReservasCache_(ss) {
+  const c = CacheService.getScriptCache();
+  if (c.get("reservas_ok")) return;
+  c.put("reservas_ok", "1", 300);   // confere no máximo a cada 5 minutos
+  try { withLock_(() => expiraReservas_(ss)); } catch (x) {}
+}
+// Pedido aguardando, sem pagamento e com a reserva vencida: cancela e devolve o estoque.
+function expiraReservas_(ss) {
+  const sh = ss.getSheetByName("Pedidos");
+  if (!sh) return 0;
+  const rows = sh.getDataRange().getValues();
+  const hdr = rows[0].map(h => String(h).trim());
+  const agora = Date.now();
+  let n = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const o = rowToOrder_(hdr, rows[i]);
+    const pg = o.pagamento || {};
+    if (o.status !== "pending" || o.pago || !pg._estoque || !(Number(pg._reservaAte) > 0) || agora <= Number(pg._reservaAte)) continue;
+    o.status = "cancelled";
+    o.pagamento = Object.assign({}, pg, { _estoque: false, _expirado: true, aguardando: false,
+      _expiradoEm: Utilities.formatDate(new Date(), TZ, "dd/MM/yyyy, HH:mm") });
+    sh.getRange(i + 1, 1, 1, H_ORD.length).setValues([orderRow_(o)]);
+    mexeEstoque_(ss, o.items, +1);
+    n++;
+  }
+  return n;
+}
+// Ações do Admin que mexem no estoque de um pedido, sempre na planilha (nunca com cópia velha do painel).
+function pedidoEstoque_(ss, id, acao) {
+  const sh = ss.getSheetByName("Pedidos");
+  const rows = sh.getDataRange().getValues();
+  const hdr = rows[0].map(h => String(h).trim());
+  const iId = hdr.indexOf("id");
+  let r = -1;
+  for (let i = 1; i < rows.length; i++) if (String(rows[i][iId]) === String(id)) { r = i; break; }
+  if (r < 0) return { ok: false, error: "Pedido não encontrado na planilha." };
+  const o = rowToOrder_(hdr, rows[r]);
+  const pg = o.pagamento || {};
+  const baixado = estoqueBaixado_(o);
+  if (acao === "confirmar") {
+    if (o.status === "cancelled" && !pg._expirado) return { ok: false, error: "Pedido cancelado." };
+    if (o.status === "confirmed") return { ok: true, order: o, products: loadProducts(ss) };
+    if (!baixado) mexeEstoque_(ss, o.items, -1);
+    const reaberto = o.status === "cancelled";
+    o.status = "confirmed";
+    o.pagamento = Object.assign({}, pg, { _estoque: true, _reaberto: reaberto || pg._reaberto || undefined });
+    if (o.ref && !(Number(o.comissao) > 0)) {
+      const afi = loadAfiliados(ss).find(a => a.codigo === o.ref);
+      if (afi) o.comissao = round2_(o.total * (Number(afi.comissao) || 0) / 100);
+    }
+    const crm = ss.getSheetByName("CRM");
+    if (crm) {
+      const cr = crm.getDataRange().getValues();
+      for (let i = 1; i < cr.length; i++) if (samePhone_(cr[i][2], o.phone)) {
+        crm.getRange(i + 1, 4, 1, 3).setValues([[Number(cr[i][3] || 0) + 1, Math.max(0, Number(cr[i][4] || 1) - 1), o.date]]);
+        break;
+      }
+    }
+  } else if (acao === "cancelar") {
+    if (o.pago) return { ok: false, error: "Pedido já pago não pode ser cancelado aqui." };
+    if (baixado) mexeEstoque_(ss, o.items, +1);
+    o.status = "cancelled";
+    o.pagamento = Object.assign({}, pg, { _estoque: false });
+  } else if (acao === "reservar") {   // pedido manual criado no painel
+    if (o.status !== "pending") return { ok: true, order: o, products: loadProducts(ss) };
+    if (!baixado) mexeEstoque_(ss, o.items, -1);
+    o.pagamento = Object.assign({}, pg, { _estoque: true, _reservaAte: Number(pg._reservaAte) || (Date.now() + RESERVA_HORAS * 3600e3) });
+  } else return { ok: false, error: "Ação inválida." };
+  sh.getRange(r + 1, 1, 1, H_ORD.length).setValues([orderRow_(o)]);
+  return { ok: true, order: o, products: loadProducts(ss) };
 }
 
 // ── LOAD ────────────────────────────────────────────────────────────────────
@@ -460,9 +550,20 @@ function ensureHeader_(ss, name, headers) {
   return ss.getSheetByName(name);
 }
 
-function saveProducts(ss, products) {
-  const costs = {};
-  loadProducts(ss).forEach(x => { costs[String(x.id)] = x.cost; });
+// base = estoque que o painel tinha ao carregar. Com base, só a DIFERENÇA feita no painel é aplicada
+// sobre o estoque atual da planilha (pedidos e reservas feitos enquanto o painel estava aberto não se perdem).
+function saveProducts(ss, products, base) {
+  const costs = {}, atual = {};
+  loadProducts(ss).forEach(x => { costs[String(x.id)] = x.cost; atual[String(x.id)] = x.stock || {}; });
+  if (base && typeof base === "object") products.forEach(p => {
+    const b = base[String(p.id)], a = atual[String(p.id)];
+    if (!b || !a || !p.stock) return;
+    Object.keys(p.stock).forEach(k => {
+      if (k.charAt(0) === "_") return;
+      const loc = Number(p.stock[k]) || 0, bb = Number(b[k]) || 0, aa = a[k] === undefined ? bb : (Number(a[k]) || 0);
+      p.stock[k] = Math.max(0, aa + (loc - bb));
+    });
+  });
   products.forEach(p => { if (p.cost === undefined || p.cost === null || p.cost === "") p.cost = costs[String(p.id)] || 0; });
   writeAll_(ss, "Produtos", H_PROD, products.map(p => [
     p.id || "", p.code || "", p.gender || "Feminino", p.name || "", p.desc || "",
@@ -489,7 +590,7 @@ function appendOrder_(ss, order) {
 
 // O Admin manda a lista inteira. Mesclamos com a planilha para não perder
 // pedidos criados ou pagos enquanto o painel estava aberto.
-function saveOrders(ss, orders) {
+function saveOrders(ss, orders, ajustaEstoque) {
   const server = loadOrders(ss);
   const byId = {};
   server.forEach(o => { byId[String(o.id)] = o; });
@@ -498,8 +599,26 @@ function saveOrders(ss, orders) {
     const k = String(o.id); seen[k] = true;
     const s = byId[k];
     if (s && s.pago && !o.pago) return Object.assign({}, s, { comissaoPaga: !!o.comissaoPaga || s.comissaoPaga });
+    if (s) {
+      // Marcas de estoque são do servidor; a etapa (_etapa) e o resto vêm do painel
+      const sp = s.pagamento || {};
+      o.pagamento = Object.assign({}, o.pagamento || {}, { _estoque: sp._estoque, _reservaAte: sp._reservaAte, _expirado: sp._expirado, _reaberto: sp._reaberto });
+      const de = s.status, para = o.status, baixado = estoqueBaixado_(s);
+      if (de !== para) {
+        if (para === "pending") o.status = de;                                // cópia velha do painel não volta o pedido
+        else if (de === "cancelled" && !sp._expirado) o.status = de;           // cancelado continua cancelado
+        else if (para === "confirmed") {                                       // confirmou por fora do pedidoEstoque_
+          if (!baixado && ajustaEstoque) mexeEstoque_(ss, o.items, -1);
+          o.pagamento._estoque = true;
+          if (de === "cancelled") o.pagamento._reaberto = true;
+        } else if (para === "cancelled") {                                     // cancelou: devolve o que estava reservado
+          if (baixado && ajustaEstoque) mexeEstoque_(ss, o.items, +1);
+          o.pagamento._estoque = false;
+        }
+      }
+    }
     if (s && s.comissaoPaga) o.comissaoPaga = true;   // pago por saque não volta atrás
-    if (s && s.pagamento && s.pagamento.link && !(o.pagamento && o.pagamento.link)) o.pagamento = s.pagamento;
+    if (s && s.pagamento && s.pagamento.link && !(o.pagamento && o.pagamento.link)) o.pagamento = Object.assign({}, s.pagamento, o.pagamento, { link: s.pagamento.link });
 if (s && s.endereco && s.endereco.cep && !(o.endereco && o.endereco.cep)) o.endereco = s.endereco; // endereço nunca se perde
     return o;
   });
