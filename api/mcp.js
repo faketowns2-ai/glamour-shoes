@@ -370,6 +370,32 @@ const TOOLS = [
     }
   },
   {
+    name: "etapa_pedidos", title: "Mudar etapa de pedidos", annotations: ESCRITA,
+    description: "Move um ou vários pedidos para a etapa 'pronto' (pronto para entrega/retirada) ou 'finalizado' (entregue). " +
+      "Só vale para pedidos confirmados (não mexe em estoque nem em pagamento). Use ids, ou de_etapa para pegar todos de uma etapa (ex.: todos os 'confirmado'). Prévia primeiro; grava com confirmar=true.",
+    inputSchema: { type: "object", properties: {
+      ids: { type: "array", items: { type: "string" }, description: "Ids dos pedidos." },
+      de_etapa: { type: "string", enum: ["confirmado", "pago", "pronto"], description: "Pega todos os pedidos que estão nesta etapa." },
+      para: { type: "string", enum: ["pronto", "finalizado"] },
+      confirmar: S_CONF }, required: ["para"] },
+    async run(a) {
+      const d = await carrega(); const O = d.orders || [];
+      let alvo = [];
+      if (a.ids && a.ids.length) alvo = O.filter(o => a.ids.map(String).includes(String(o.id)));
+      else if (a.de_etapa) alvo = O.filter(o => etapa(o) === a.de_etapa);
+      else return { erro: "Informe ids ou de_etapa." };
+      const fora = alvo.filter(o => o.status !== "confirmed");
+      alvo = alvo.filter(o => o.status === "confirmed" && etapa(o) !== a.para);
+      if (!alvo.length) return { erro: "Nenhum pedido confirmado para mudar.", ignorados: fora.map(o => `${o.id} • ${o.client} • ${o.status}`) };
+      const lista = alvo.map(o => `${o.id} • ${o.client} • ${o.dateStr || o.date} • ${brl(o.total)} • ${etapa(o)} → ${a.para}${o.pago ? "" : " • NÃO PAGO"}`);
+      const res = { pedidos: lista, total: alvo.length, ignorados: fora.length ? fora.map(o => `${o.id} • ${o.client} • ${o.status}`) : undefined };
+      if (!a.confirmar) return { previa: true, mensagem: "Prévia. Nada foi salvo. Confirme com o usuário e chame de novo com confirmar=true.", ...res };
+      alvo.forEach(o => { o.pagamento = { ...(o.pagamento || {}), _etapa: a.para }; });
+      await admin({ action: "saveOrders", orders: O });
+      return { salvo: true, ...res };
+    }
+  },
+  {
     name: "listar_clientes", title: "Listar clientes", annotations: LEITURA,
     description: "Clientes do CRM com nº de pedidos e data do último pedido. Útil para campanhas: quem não compra há X dias, quem mais compra.",
     inputSchema: { type: "object", properties: {
