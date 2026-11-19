@@ -12,7 +12,7 @@ const crypto = require("crypto");
 
 const SITE = "https://glamour-shoes.vercel.app";
 const SCRIPT_URL_PADRAO = "https://script.google.com/macros/s/AKfycbw1Pdwu6HC8RzYZplOuhZtYw4kbVcLJPWG35DMElEKiLg4ckebqvRcUHfZMUh_zZu3k/exec";
-const VERSAO = "1.0.0";
+const VERSAO = "1.1.0";
 const GEN = ["Feminino", "Masculino", "Infantil"];
 
 // ─── acesso à planilha (Apps Script) ─────────────────────────────────────────
@@ -275,6 +275,76 @@ const TOOLS = [
       return { total: O.length, pedidos: O.slice(0, a.limite || 30).map(o => ({
         id: o.id, data: o.dateStr || o.date, cliente: o.client, telefone: o.phone, status: o.status, pago: !!o.pago, total: brl(o.total),
         origem: o.origin, afiliada: o.ref || undefined, itens: (o.items || []).map(i => `${i.qty}x ${i.code || ""} ${String(i.name || "").trim()} nº ${i.size} (${brl(i.price)})`) })) };
+    }
+  },
+  {
+    name: "atualizar_pedido", title: "Atualizar pedido", annotations: { ...ESCRITA, idempotentHint: false },
+    description: "Confirma, cancela ou marca como pago um pedido. confirmar = igual ao botão Confirmar do Admin (baixa o estoque e atualiza o cliente no CRM). " +
+      "marcar_pago = registra pagamento recebido fora da InfinitePay (PIX, dinheiro, cartão na loja); se o pedido ainda estiver aguardando, também confirma e baixa o estoque; com afiliada, calcula a comissão. " +
+      "cancelar = só para pedidos aguardando. Pedido por id, ou por nome/telefone do cliente quando só houver um pedido compatível. Prévia primeiro; grava com confirmar=true.",
+    inputSchema: { type: "object", properties: {
+      pedido: { type: "string", description: "Id do pedido, ou nome/telefone do cliente." },
+      acao: { type: "string", enum: ["confirmar", "cancelar", "marcar_pago"] },
+      forma_pagamento: { type: "string", description: "Só para marcar_pago, ex.: pix, dinheiro, cartão." },
+      confirmar: S_CONF }, required: ["pedido", "acao"] },
+    async run(a) {
+      const d = await carrega();
+      const P = d.products || [], n0 = P.length, O = d.orders || [], C = d.crm || [];
+      const ref = String(a.pedido || "").trim(), b = norm(ref), dg = ref.replace(/\D/g, "");
+      let m = O.filter(o => String(o.id) === ref);
+      if (!m.length) m = O.filter(o => norm(o.client).includes(b) || (dg.length >= 4 && String(o.phone).includes(dg)));
+      // por nome, prefere os pedidos em que a ação faz sentido
+      if (m.length > 1) {
+        const util = m.filter(o => a.acao === "marcar_pago" ? !o.pago && o.status !== "cancelled" : o.status === "pending");
+        if (util.length) m = util;
+      }
+      const curto = o => `${o.id} • ${o.client} • ${o.dateStr || o.date} • ${brl(o.total)} • ${o.status}${o.pago ? " • pago" : ""}`;
+      if (!m.length) return { erro: "Pedido não encontrado." };
+      if (m.length > 1) return { erro: "Mais de um pedido encontrado. Use o id.", opcoes: m.slice(0, 10).map(curto) };
+      const o = m[0];
+      const antes = { status: o.status, pago: !!o.pago };
+      const avisos = [];
+      if (a.acao === "cancelar" && o.status !== "pending") return { erro: `Só dá para cancelar pedido aguardando. Este está ${o.status}.` };
+      if (a.acao === "confirmar" && o.status !== "pending") return { erro: `Este pedido já está ${o.status}.` };
+      if (a.acao === "marcar_pago" && o.pago) return { erro: "Este pedido já está marcado como pago." };
+      if (a.acao === "marcar_pago" && o.status === "cancelled") return { erro: "Pedido cancelado não pode ser marcado como pago." };
+
+      const confirma = o.status === "pending" && (a.acao === "confirmar" || a.acao === "marcar_pago");
+      const baixas = [];
+      if (confirma) {
+        for (const it of o.items || []) {
+          const p = P.find(x => String(x.id) === String(it.pid || it.productId));
+          if (!p) { avisos.push(`${it.name}: produto não existe mais no catálogo, estoque não baixado.`); continue; }
+          p.stock = { ...(p.stock || {}) };
+          if (p.stock[it.size] === undefined) { avisos.push(`${p.code} nº ${it.size}: numeração não existe no produto.`); continue; }
+          const tem = +p.stock[it.size] || 0, q = +it.qty || 0;
+          if (tem < q) avisos.push(`${p.code} ${p.name.trim()} nº ${it.size}: estoque ${tem}, pedido ${q}. Fica 0.`);
+          p.stock[it.size] = Math.max(0, tem - q);
+          baixas.push(`${p.code} ${p.name.trim()} nº ${it.size}: ${tem} → ${p.stock[it.size]}`);
+        }
+        o.status = "confirmed";
+        const c = C.find(x => String(x.phone).replace(/\D/g, "") === String(o.phone).replace(/\D/g, ""));
+        if (c) { c.orders = (+c.orders || 0) + 1; c.pending = Math.max(0, (+c.pending || 1) - 1); c.lastOrder = o.date; }
+      }
+      if (a.acao === "cancelar") o.status = "cancelled";
+      let comissao;
+      if (a.acao === "marcar_pago") {
+        const agora = new Date().toLocaleString("pt-BR", { timeZone: "America/Belem" });
+        o.pago = true;
+        o.pagamento = { ...(o.pagamento || {}), manual: true, metodo: a.forma_pagamento || "", valorPago: +o.total || 0, pagoEm: agora, aguardando: false };
+        const afi = o.ref ? (d.afiliados || []).find(x => String(x.codigo).toLowerCase() === String(o.ref).toLowerCase()) : null;
+        if (afi && !(+o.comissao > 0)) { o.comissao = Math.round((+o.total || 0) * (+afi.comissao || 0)) / 100; comissao = `${afi.nome}: ${brl(o.comissao)} (${afi.comissao}%)`; }
+      }
+      const res = { pedido: curto({ ...o, status: antes.status, pago: antes.pago }), antes, depois: { status: o.status, pago: !!o.pago },
+        baixa_estoque: baixas.length ? baixas : undefined, comissao_afiliada: comissao, avisos: avisos.length ? avisos : undefined };
+      if (!a.confirmar) return { previa: true, mensagem: "Prévia. Nada foi salvo. Confirme com o usuário e chame de novo com confirmar=true.", ...res };
+      if (confirma) {
+        if (P.length !== n0) throw new Error("Proteção: a lista de produtos mudou de tamanho. Nada foi salvo.");
+        await admin({ action: "saveAll", products: P, orders: O, crm: C });
+      } else {
+        await admin({ action: "saveOrders", orders: O });
+      }
+      return { salvo: true, ...res };
     }
   },
   {
