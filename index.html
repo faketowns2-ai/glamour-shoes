@@ -1254,6 +1254,8 @@ endBox(o),
           ),
           ce("div",{style:{display:"flex",flexDirection:"column",gap:"6px",alignItems:"flex-end"}},
             mkBadge(o.status),
+            ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#25d366",color:"#fff"},
+              onclick:()=>openPedidoMsg(o)},"💬 WhatsApp"),
             o.status==="pending"&&!isEditing?ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",justifyContent:"flex-end"}},
               ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#fff3e0",color:"#e65100",border:"1px solid #e65100"},
                 onclick:()=>{S._editingOrder=o.id;render();}},"✏️ Editar"),
@@ -1267,6 +1269,76 @@ endBox(o),
       );
     }))
   );
+}
+
+// ─── MENSAGENS RÁPIDAS DO PEDIDO (WhatsApp do cliente) ───────────────────────
+const LOJA_END  = "Avenida Mendonça Furtado, 184, Centro (em frente ao Mundo das Unhas), Macapá/AP";
+const PIX_CHAVE = "00685226220";            // chave PIX (CPF)
+const PIX_NOME  = "Yalley Vasconcelos";
+const PED_TPLS = [
+  {id:"retirada", icon:"📦", label:"Pronto para retirada", text:
+`Olá, {nome}! Seu pedido na Glamour❤️Shoes já está separado e pronto para retirada. 🛍
+
+{itens}
+Total: {total}
+
+📍 Endereço: ${LOJA_END}
+
+Te esperamos! Qualquer dúvida, é só chamar aqui.`},
+  {id:"pagamento", icon:"💳", label:"Aguardando pagamento", text:
+`Olá, {nome}! Recebemos seu pedido na Glamour❤️Shoes e estamos aguardando a confirmação do pagamento para separar. 😊
+
+{itens}
+Total: {total}
+
+💠 Chave PIX (CPF): ${PIX_CHAVE}
+Nome: ${PIX_NOME}
+
+Assim que pagar, é só enviar o comprovante aqui. Obrigada!`},
+  {id:"lembrete", icon:"⏰", label:"Lembrete", text:
+`Oi, {nome}! Passando para lembrar do seu pedido na Glamour❤️Shoes. 💕
+
+{itens}
+Total: {total}
+
+{lembrete}
+
+Qualquer dúvida, estamos à disposição!`},
+  {id:"confirmado", icon:"✅", label:"Pedido confirmado", text:
+`Olá, {nome}! Seu pedido na Glamour❤️Shoes foi confirmado. Obrigada pela preferência! ❤️
+
+{itens}
+Total: {total}`},
+  {id:"livre", icon:"💬", label:"Mensagem livre", text:`Olá, {nome}! `},
+];
+function pedidoTexto(o,tpl){
+  const nome=String(cliName(o)||o.client||"").trim().split(/\s+/)[0]||"";
+  const itens=(o.items||[]).map(i=>`• ${i.name} | Nº ${i.size}${(+i.qty||1)>1?` | ${i.qty} pares`:""}`).join("\n");
+  const lembrete=o.pago
+    ?`Ele já está pago e separado, aguardando sua retirada.\n📍 ${LOJA_END}`
+    :`Ainda aguardamos a confirmação do pagamento.\n💠 Chave PIX (CPF): ${PIX_CHAVE}\nNome: ${PIX_NOME}`;
+  return tpl.text.replace(/\{nome\}/g,nome).replace(/\{itens\}/g,itens).replace(/\{total\}/g,fmt(o.total)).replace(/\{lembrete\}/g,lembrete);
+}
+function openPedidoMsg(o,tplId){
+  const k=phoneKey(o.phone);
+  if(!keyOk(k)) return toast("Telefone do cliente inválido ou sem DDD.");
+  const tpl=PED_TPLS.find(t=>t.id===tplId)||(o.pago?PED_TPLS[0]:PED_TPLS[1]);
+  const ta=ce("textarea",{class:"inp",style:{width:"100%",resize:"vertical",lineHeight:"1.5",boxSizing:"border-box",marginBottom:"6px"}});
+  ta.value=pedidoTexto(o,tpl); ta.rows=11;
+  openModal(ce("div",{},
+    ce("div",{style:{fontWeight:700,fontSize:"15px",marginBottom:"3px"}},"💬 Mensagem para o cliente"),
+    ce("div",{style:{fontSize:"12px",color:"#888",marginBottom:"10px"}},`Para: ${cliName(o)} (${phoneFmt(o.phone)})`),
+    ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"10px"}},
+      ...PED_TPLS.map(t=>ce("button",{class:"btn",style:{padding:"6px 12px",fontSize:"12px",borderRadius:"18px",
+        border:`1.5px solid ${PINK}`,background:t.id===tpl.id?PINK:"#fff",color:t.id===tpl.id?"#fff":PINK},
+        onclick:()=>{closeModal();openPedidoMsg(o,t.id);}},`${t.icon} ${t.label}`))),
+    ta,
+    ce("div",{style:{fontSize:"11px",color:"#aaa",marginBottom:"12px"}},"Escolha um modelo e edite o texto antes de enviar."),
+    ce("div",{style:{display:"flex",gap:"10px"}},
+      ce("button",{class:"btn",style:{flex:1,padding:"11px 0",borderRadius:"28px",background:"#25d366",color:"#fff",fontSize:"14px"},
+        onclick:()=>{ window.open(`https://wa.me/55${k}?text=${encodeURIComponent(ta.value)}`,"_blank"); closeModal(); toast("WhatsApp aberto!"); }},"📲 Enviar no WhatsApp"),
+      ce("button",{class:"btn",style:{padding:"11px 18px",borderRadius:"24px",background:"#eee",color:"#1a1a2e"},onclick:closeModal},"Cancelar"))
+  ));
 }
 
 function buildOrderEditor(o){
