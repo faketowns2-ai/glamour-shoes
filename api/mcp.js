@@ -12,8 +12,24 @@ const crypto = require("crypto");
 
 const SITE = "https://glamour-shoes.vercel.app";
 const SCRIPT_URL_PADRAO = "https://script.google.com/macros/s/AKfycbw1Pdwu6HC8RzYZplOuhZtYw4kbVcLJPWG35DMElEKiLg4ckebqvRcUHfZMUh_zZu3k/exec";
-const VERSAO = "1.1.0";
+const VERSAO = "1.1.1";
 const GEN = ["Feminino", "Masculino", "Infantil"];
+
+// ─── datas no horário de Brasília ────────────────────────────────────────────
+// O servidor (Vercel) roda em UTC. Tudo que é "hoje" ou "últimos N dias" é contado
+// pelo calendário de Brasília (UTC-3): dias=1 é hoje desde 00:00, dias=7 é hoje + 6 dias antes.
+const TZ = "America/Sao_Paulo";
+const OFFSET_BR = 3 * 3600e3; // Brasília = UTC-3 (sem horário de verão desde 2019)
+const hojeBR = () => new Date(Date.now() - OFFSET_BR).toISOString().slice(0, 10);
+const inicioDiaBR = n => Date.parse(hojeBR() + "T00:00:00-03:00") - (n - 1) * 864e5;
+// Momento do pedido: o id é o carimbo de tempo da criação; se não houver, usa a data (yyyy-MM-dd) como meia-noite de Brasília.
+const momentoPedido = o => {
+  const id = +o.id;
+  if (id > 1e12 && id < 1e13) return id;
+  const d = String(o.date || "");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return Date.parse(d + "T00:00:00-03:00");
+  return new Date(d).getTime() || 0;
+};
 
 // ─── acesso à planilha (Apps Script) ─────────────────────────────────────────
 let TOKEN = null;
@@ -117,7 +133,7 @@ const TOOLS = [
     async run() {
       const d = await carrega();
       const P = d.products || [], O = d.orders || [];
-      const dias = n => { const t = Date.now() - n * 864e5; return O.filter(o => new Date(o.date).getTime() >= t && o.status !== "cancelled"); };
+      const dias = n => { const t = inicioDiaBR(n); return O.filter(o => momentoPedido(o) >= t && o.status !== "cancelled"); };
       const soma = a => a.reduce((s, o) => s + (+o.total || 0), 0);
       const pend = O.filter(o => o.status === "pending");
       return {
@@ -265,12 +281,12 @@ const TOOLS = [
     name: "listar_pedidos", title: "Listar pedidos", annotations: LEITURA,
     description: "Pedidos (mais recentes primeiro) com cliente, telefone, itens, total, status (pending = aguardando, confirmed, cancelled), origem e afiliada.",
     inputSchema: { type: "object", properties: {
-      status: { type: "string", enum: ["pending", "confirmed", "cancelled"] }, dias: { type: "number", description: "Só dos últimos N dias." },
+      status: { type: "string", enum: ["pending", "confirmed", "cancelled"] }, dias: { type: "number", description: "Só dos últimos N dias pelo calendário de Brasília (1 = hoje desde 00:00, 7 = hoje e os 6 dias anteriores)." },
       busca: { type: "string", description: "Nome ou telefone do cliente." }, limite: { type: "number", description: "Padrão 30." } } },
     async run(a) {
       let O = ((await carrega()).orders || []).slice().sort((x, y) => (+y.id || 0) - (+x.id || 0));
       if (a.status) O = O.filter(o => o.status === a.status);
-      if (a.dias) { const t = Date.now() - a.dias * 864e5; O = O.filter(o => new Date(o.date).getTime() >= t); }
+      if (a.dias) { const t = inicioDiaBR(a.dias); O = O.filter(o => momentoPedido(o) >= t); }
       if (a.busca) { const b = norm(a.busca), dg = String(a.busca).replace(/\D/g, ""); O = O.filter(o => norm(o.client).includes(b) || (dg.length >= 4 && String(o.phone).includes(dg))); }
       return { total: O.length, pedidos: O.slice(0, a.limite || 30).map(o => ({
         id: o.id, data: o.dateStr || o.date, cliente: o.client, telefone: o.phone, status: o.status, pago: !!o.pago, total: brl(o.total),
@@ -329,7 +345,7 @@ const TOOLS = [
       if (a.acao === "cancelar") o.status = "cancelled";
       let comissao;
       if (a.acao === "marcar_pago") {
-        const agora = new Date().toLocaleString("pt-BR", { timeZone: "America/Belem" });
+        const agora = new Date().toLocaleString("pt-BR", { timeZone: TZ });
         o.pago = true;
         o.pagamento = { ...(o.pagamento || {}), manual: true, metodo: a.forma_pagamento || "", valorPago: +o.total || 0, pagoEm: agora, aguardando: false };
         const afi = o.ref ? (d.afiliados || []).find(x => String(x.codigo).toLowerCase() === String(o.ref).toLowerCase()) : null;

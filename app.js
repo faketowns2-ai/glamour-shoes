@@ -31,8 +31,8 @@ const DEMO = [
 // UTILS
 // ═══════════════════════════════════════════════════════════════════════════
 const fmt    = v  => Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
-const toDay  = () => new Date().toISOString().slice(0,10);
-const nowStr = () => new Date().toLocaleString("pt-BR");
+const toDay  = () => new Date(Date.now()-3*3600e3).toISOString().slice(0,10); // data de Brasília (UTC-3)
+const nowStr = () => new Date().toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"});
 const lsGet  = (k,d) => { try{ const v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){return d;} };
 const lsSet  = (k,v) => { try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} };
 
