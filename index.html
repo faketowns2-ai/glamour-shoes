@@ -146,6 +146,13 @@ function normDate(o){
   return "";
 }
 
+// ─── RESERVA DE ESTOQUE ──────────────────────────────────────────────────────
+const RESERVA_HORAS=48;
+const AVISO_RESERVA=`Seus produtos ficam reservados por ${RESERVA_HORAS} horas. Se o pagamento não for feito nesse prazo, o pedido é cancelado automaticamente e os produtos voltam para o estoque, ficando disponíveis para outras clientes.`;
+function fmtPrazo(ms){ if(!(+ms>0)) return ""; const d=new Date(+ms);
+  const f=o=>d.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo",...o});
+  return `${f({weekday:"short"}).replace(".","")}, ${f({day:"2-digit",month:"2-digit"})} às ${f({hour:"2-digit",minute:"2-digit"})}`; }
+
 let _tt=null;
 function toast(msg,dur=3000){
   const el=document.getElementById("toast");
@@ -345,7 +352,7 @@ async function loadFromSheets(force=false){
       if(data.cliques) S.cliques=data.cliques;
       if(data.saques){ S.saques=data.saques; lsSet("gs_saq",S.saques); }
       if(force){
-        if(data.products&&data.products.length>0){ S.products=normProds(data.products); lsSet("gs_prod",S.products); }
+        if(data.products&&data.products.length>0){ S.products=normProds(data.products); S._base=baseDe(S.products); lsSet("gs_prod",S.products); }
         if(data.orders  &&data.orders.length>0)  { S.orders=data.orders;     lsSet("gs_ord",S.orders);   }
         if(data.crm     &&data.crm.length>0)     { S.crm=dedupeCRM(data.crm);           lsSet("gs_crm",S.crm);      }
         toast("✅ Dados recarregados da planilha!");
@@ -374,7 +381,7 @@ S.crm=dedupeCRM(S.crm);
           lsSet("gs_crm",S.crm);
         }
         if(!window._stockDraft&&data.products&&data.products.length>0){
-          S.products=normProds(data.products); lsSet("gs_prod",S.products);
+          S.products=normProds(data.products); S._base=baseDe(S.products); lsSet("gs_prod",S.products);
         }
       }
       S.lastSync=nowStr(); lsSet("gs_lastsync",S.lastSync); S.syncError="";
@@ -390,14 +397,20 @@ S.crm=dedupeCRM(S.crm);
   render(); return true;
 }
 
+// Estoque que o painel tinha no último carregamento: a planilha aplica só a diferença editada aqui
+// (assim reservas e pedidos feitos enquanto o painel estava aberto não se perdem).
+function baseDe(prods){ const b={}; (prods||[]).forEach(p=>{ b[String(p.id)]={...(p.stock||{})}; }); return b; }
 async function _call(body){
 if(body&&Array.isArray(body.crm)) body={...body,crm:dedupeCRM(body.crm)}; // nunca envia CRM repetido
+  const comProdutos=!!(body&&body.products);
+  if(comProdutos&&S._base) body={...body,base:S._base};
   if(!S.scriptUrl) return {ok:false,error:"Sem conexão com a planilha."};
   try{
     const res=await fetch(S.scriptUrl,{method:"POST",headers:{"Content-Type":"text/plain"},
       body:JSON.stringify({...body,token:S.token||undefined})});
     const d=JSON.parse(await res.text());
     if(d.auth===false) logoutLocal("Sessão expirada. Entre de novo no Admin.");
+    if(d.ok&&comProdutos) S._base=baseDe(S.products);
     return d;
   }catch(e){ return {ok:false,error:"Sem conexão. Tente de novo."}; }
 }
@@ -957,6 +970,8 @@ buildEndCard(),
           ce("span",{style:{fontWeight:600}},fmt(i.price*i.qty)))),
         ce("div",{style:{borderTop:"1px solid #ddd",marginTop:"8px",paddingTop:"8px",fontWeight:800,
           color:PINK,display:"flex",justifyContent:"space-between"}},ce("span",{},"Total"),ce("span",{},fmt(total)))),
+      ce("div",{style:{background:"#fff8e1",border:"1px solid #ffe082",borderRadius:"12px",padding:"11px 14px",margin:"0 0 14px",fontSize:"12.5px",lineHeight:"1.5",color:"#6d4c00"}},
+        ce("b",{},"⏰ Reserva de 48 horas. "),AVISO_RESERVA),
       ce("button",{class:"btn",disabled:!!S.busy,style:{width:"100%",padding:"14px 0",fontSize:"15px",borderRadius:"30px",
         background:PINK,color:"#fff",marginBottom:"10px"},onclick:doPay},S.busy?"Gerando pagamento...":"💳 Pagar agora (Pix ou cartão)"),
       ce("button",{class:"btn",disabled:!!S.busy,style:{width:"100%",padding:"13px 0",fontSize:"15px",borderRadius:"30px",
@@ -1053,9 +1068,10 @@ async function doFinalize(){
   const total=d.ok?d.total:S.cart.reduce((s,i)=>s+i.price*i.qty,0);
   const lines=S.cart.map(i=>`• ${i.name} | Nº ${i.size} | Qtd: ${i.qty} | ${fmt(i.price*i.qty)}`).join("\n");
   const ref=getRef();
-  const msg=`*Pedido Glamour❤️Shoes${VAREJO?" (VAREJO)":" (ATACADO)"}*${d.ok?` #${d.id}`:""}\n\nCliente: ${S.cName}\nWhatsApp: ${phoneFmt(S.cPhone)}${ref?`\nIndicação: ${ref}`:""}\n\n${lines}${endTexto(S.cEnd)?"\n\n📍 Entrega: "+endTexto(S.cEnd):""}\n\n*Total: ${fmt(total)}*`;
+  const prazo=d.ok&&d.reservaAte?fmtPrazo(d.reservaAte):"";
+  const msg=`*Pedido Glamour❤️Shoes${VAREJO?" (VAREJO)":" (ATACADO)"}*${d.ok?` #${d.id}`:""}\n\nCliente: ${S.cName}\nWhatsApp: ${phoneFmt(S.cPhone)}${ref?`\nIndicação: ${ref}`:""}\n\n${lines}${endTexto(S.cEnd)?"\n\n📍 Entrega: "+endTexto(S.cEnd):""}\n\n*Total: ${fmt(total)}*${prazo?`\n\n⏰ Reservado até ${prazo}. Sem pagamento até lá, o pedido é cancelado automaticamente.`:""}`;
   S.cart=[]; S.cName=""; S.cPhone="";
-  toast("Pedido enviado! Aguardando confirmação."); go("catalog");
+  toast(prazo?`Pedido enviado! Produtos reservados até ${prazo}.`:"Pedido enviado! Aguardando confirmação.",5000); go("catalog");
   location.href=`https://wa.me/${WA}?text=${encodeURIComponent(msg)}`;
 }
 
@@ -1104,7 +1120,7 @@ const msg=`*Pedido PAGO Glamour❤️Shoes* #${r.id}\n\n${o?`Cliente: ${o.client
     ce("h2",{style:{margin:"10px 0 6px"}},paid?"Pagamento aprovado!":"Pagamento em análise"),
     ce("p",{style:{color:"#888",fontSize:"13px",marginBottom:"16px"}},
       paid?`Pedido #${r.id} confirmado. Agora é só combinar a entrega com a gente no WhatsApp.`
-          :"Ainda não recebemos a confirmação. Se você já pagou, toque em Verificar de novo em alguns instantes."),
+          :`Ainda não recebemos a confirmação. Se você já pagou, toque em Verificar de novo em alguns instantes. ${AVISO_RESERVA}`),
     o&&o.items?ce("div",{style:{background:"#f7f0f5",borderRadius:"12px",padding:"12px 14px",fontSize:"13px",textAlign:"left",marginBottom:"16px"}},
       ...o.items.map(i=>ce("div",{},`${i.name} | Nº ${i.size} x${i.qty}`)),
       ce("div",{style:{fontWeight:800,color:PINK,marginTop:"6px"}},`Total: ${fmt(o.total)}`)):null,
@@ -1251,6 +1267,7 @@ function buildOrders(){
               o.ref?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#e0f2f1",
                 color:"#00695c",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},`🤝 ${o.ref}`):null),
             ce("div",{style:{fontSize:"12px",color:"#aaa",marginBottom:"6px"}},o.dateStr),
+            infoReserva(o),
 endBox(o),
             isEditing?buildOrderEditor(o):ce("div",{},
               ...o.items.map(i=>ce("div",{style:{fontSize:"13px",color:"#555",marginBottom:"2px"}},
@@ -1270,7 +1287,7 @@ endBox(o),
               ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#fff3e0",color:"#e65100",border:"1px solid #e65100"},
                 onclick:()=>{S._editingOrder=o.id;render();}},"✏️ Editar"),
               ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#4caf50",color:"#fff"},
-                onclick:()=>confirmOrder(o.id)},"Confirmar (baixa estoque)"),
+                onclick:()=>confirmOrder(o.id)},"Confirmar"),
               ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#e53935",color:"#fff"},
                 onclick:()=>cancelaPedido(o)},"Cancelar")
             ):null
@@ -1304,6 +1321,8 @@ Total: {total}
 💠 Chave PIX (CPF): ${PIX_CHAVE}
 Nome: ${PIX_NOME}
 
+⏰ Seus produtos ficam reservados até {prazo}. Se o pagamento não for feito até lá, o pedido é cancelado automaticamente e os produtos voltam para o estoque.
+
 Assim que pagar, é só enviar o comprovante aqui. Obrigada!`},
   {id:"lembrete", icon:"⏰", label:"Lembrete", text:
 `Oi, {nome}! Passando para lembrar do seu pedido na Glamour❤️Shoes. 💕
@@ -1326,8 +1345,9 @@ function pedidoTexto(o,tpl){
   const itens=(o.items||[]).map(i=>`• ${i.name} | Nº ${i.size}${(+i.qty||1)>1?` | ${i.qty} pares`:""}`).join("\n");
   const lembrete=o.pago
     ?`Ele já está pago e separado, aguardando sua retirada.\n📍 ${LOJA_END}`
-    :`Ainda aguardamos a confirmação do pagamento.\n💠 Chave PIX (CPF): ${PIX_CHAVE}\nNome: ${PIX_NOME}`;
-  return tpl.text.replace(/\{nome\}/g,nome).replace(/\{itens\}/g,itens).replace(/\{total\}/g,fmt(o.total)).replace(/\{lembrete\}/g,lembrete);
+    :`Ainda aguardamos a confirmação do pagamento.\n💠 Chave PIX (CPF): ${PIX_CHAVE}\nNome: ${PIX_NOME}\n\n⏰ A reserva vale até {prazo}. Depois disso, o pedido é cancelado automaticamente e os produtos voltam para o estoque.`;
+  const pg=o.pagamento||{}, prazo=fmtPrazo(+pg._reservaAte>0?pg._reservaAte:(+o.id>1e12?+o.id:Date.now())+RESERVA_HORAS*3600e3);
+  return tpl.text.replace(/\{nome\}/g,nome).replace(/\{itens\}/g,itens).replace(/\{total\}/g,fmt(o.total)).replace(/\{lembrete\}/g,lembrete).replace(/\{prazo\}/g,prazo);
 }
 function openPedidoMsg(o,tplId){
   const k=phoneKey(o.phone);
@@ -1445,38 +1465,52 @@ function etapaPed(o){
   if(o.pago) return "pago";
   return o.status==="confirmed"?"confirmado":"aguardando";
 }
+function infoReserva(o){
+  const pg=o.pagamento||{}, st=(bg,c,t)=>ce("div",{style:{display:"inline-block",fontSize:"11.5px",fontWeight:700,background:bg,color:c,borderRadius:"10px",padding:"3px 10px",marginBottom:"6px"}},t);
+  if(o.status==="pending"&&pg._estoque&&+pg._reservaAte>0){
+    const h=(+pg._reservaAte-Date.now())/3600e3;
+    return h>0?st(h<12?"#ffebee":"#fff8e1",h<12?"#c62828":"#8d6e00",`⏰ Estoque reservado até ${fmtPrazo(pg._reservaAte)} (${h<1?"menos de 1 h":Math.floor(h)+" h"})`)
+              :st("#ffebee","#c62828","⏰ Reserva vencida: será cancelado e o estoque volta na próxima sincronização");
+  }
+  if(o.status==="pending"&&!estoqueBaixado(o)) return st("#eceff1","#455a64","Sem reserva de estoque (pedido antigo): confirme para baixar");
+  if(o.status==="cancelled"&&pg._expirado) return st("#ffebee","#c62828",`Cancelado automaticamente: sem pagamento em ${RESERVA_HORAS} h${pg._expiradoEm?" ("+pg._expiradoEm+")":""}. Estoque devolvido.`);
+  if(pg._reaberto) return st("#fff3e0","#e65100","⚠️ Pago depois do prazo da reserva: confira se ainda tem o par no estoque");
+  return null;
+}
 function mkEtapaBadge(o){ const[l,bg,c]=ETAPA_COR[etapaPed(o)]; return ce("span",{class:"badge",style:{background:bg,color:c}},l); }
 // pedidos antigos não têm a marca: confirmado = estoque já baixado
 function estoqueBaixado(o){ const v=(o.pagamento||{})._estoque; return v===undefined||v===""?o.status==="confirmed":!!v; }
-function mexeEstoque(o,sinal){ // sinal -1 baixa, +1 devolve
-  (o.items||[]).forEach(it=>{
-    const p=S.products.find(x=>String(x.id)===String(it.pid||it.productId));
-    if(p&&p.stock&&p.stock[it.size]!==undefined) p.stock[it.size]=Math.max(0,(+p.stock[it.size]||0)+sinal*(+it.qty||0));
-  });
-  o.pagamento={...(o.pagamento||{}),_estoque:sinal<0};
-}
-async function salvaPedido(o,msg,comEstoque){
-  lsSet("gs_ord",S.orders); if(comEstoque) lsSet("gs_prod",S.products); lsSet("gs_crm",S.crm);
+// Toda mudança de estoque de pedido é feita na planilha (pedidoEstoque), que devolve o pedido e o estoque atualizados.
+async function pedEstoque(o,acao){
+  if(!o.id||!S.scriptUrl){ toast("Sem conexão com a planilha.",4000); return false; }
   S.syncing=true; render();
-  const ok=await _post(comEstoque?{action:"saveAll",products:prodsForSheet(),orders:S.orders,crm:S.crm}:{action:"saveOrders",orders:S.orders});
+  const d=await _call({action:"pedidoEstoque",id:o.id,acao});
+  S.syncing=false;
+  if(!d.ok){ toast("⚠️ "+(d.error||"Erro na planilha."),5000); render(); return false; }
+  if(d.order){ const etapa=(o.pagamento||{})._etapa; Object.assign(o,d.order); if(etapa&&!(o.pagamento||{})._etapa) o.pagamento={...(o.pagamento||{}),_etapa:etapa}; }
+  if(d.products&&d.products.length){ S.products=normProds(d.products); S._base=baseDe(S.products); lsSet("gs_prod",S.products); }
+  if(acao==="confirmar"){ const c=S.crm.find(x=>samePhone(x.phone,o.phone)); if(c){c.orders=(c.orders||0)+1;c.pending=Math.max(0,(c.pending||1)-1);c.lastOrder=o.date;} lsSet("gs_crm",S.crm); }
+  lsSet("gs_ord",S.orders); render(); return true;
+}
+async function salvaPedido(o,msg){
+  lsSet("gs_ord",S.orders);
+  S.syncing=true; render();
+  const ok=await _post({action:"saveOrders",orders:S.orders});
   S.syncing=false; toast(ok?msg:"⚠️ Salvo neste aparelho. Erro na planilha.",ok?3000:5000); render(); return ok;
 }
 async function pedidoPago(o){
   const forma=prompt("Pagamento recebido. Forma (pix, dinheiro, cartão):","pix"); if(forma===null) return;
-  let baixou=false;
-  if(o.status==="pending"){ if(!estoqueBaixado(o)){ mexeEstoque(o,-1); baixou=true; } o.status="confirmed";
-    const c=S.crm.find(x=>samePhone(x.phone,o.phone)); if(c){c.orders=(c.orders||0)+1;c.pending=Math.max(0,(c.pending||1)-1);c.lastOrder=o.date;} }
+  if(o.status!=="confirmed"&&!(await pedEstoque(o,"confirmar"))) return;
   if(o.ref&&!(+o.comissao>0)){ const a=S.afiliados.find(x=>x.codigo===o.ref); if(a) o.comissao=Math.round(o.total*(+a.comissao||0))/100; }
   o.pago=true;
   o.pagamento={...(o.pagamento||{}),manual:true,metodo:forma.trim(),valorPago:+o.total||0,pagoEm:nowStr(),aguardando:false};
-  await salvaPedido(o,"💳 Pagamento confirmado!",baixou);
+  await salvaPedido(o,"💳 Pagamento confirmado!");
 }
 async function setEtapa(o,e){
   if(e==="finalizado"&&!o.pago&&!confirm("Este pedido ainda não está marcado como pago. Finalizar mesmo assim?")) return;
-  let baixou=false;
-  if(o.status==="pending"){ if(!estoqueBaixado(o)){ mexeEstoque(o,-1); baixou=true; } o.status="confirmed"; }
+  if(o.status!=="confirmed"&&!(await pedEstoque(o,"confirmar"))) return;
   o.pagamento={...(o.pagamento||{}),_etapa:e};
-  await salvaPedido(o,e==="pronto"?"📦 Pedido pronto para retirada!":"🏁 Pedido finalizado!",baixou);
+  await salvaPedido(o,e==="pronto"?"📦 Pedido pronto para retirada!":"🏁 Pedido finalizado!");
   if(e==="pronto"&&keyOk(phoneKey(o.phone))&&confirm("Avisar o cliente no WhatsApp que o pedido está pronto?")) openPedidoMsg(o,"retirada");
 }
 async function finalizaLote(lista){
@@ -1485,14 +1519,12 @@ async function finalizaLote(lista){
   if(!confirm(`Marcar ${alvo.length} pedido${alvo.length>1?"s":""} como finalizado (entregue)? O estoque e os pagamentos não mudam.`)) return;
   alvo.forEach(o=>{ o.pagamento={...(o.pagamento||{}),_etapa:"finalizado"}; });
   S.pedFiltro="finalizado";
-  await salvaPedido(null,`🏁 ${alvo.length} pedido${alvo.length>1?"s":""} finalizado${alvo.length>1?"s":""}!`,false);
+  await salvaPedido(null,`🏁 ${alvo.length} pedido${alvo.length>1?"s":""} finalizado${alvo.length>1?"s":""}!`);
 }
 async function cancelaPedido(o){
   const devolve=estoqueBaixado(o);
   if(!confirm(devolve?"Cancelar este pedido? Os pares voltam para o estoque.":"Cancelar este pedido?")) return;
-  if(devolve) mexeEstoque(o,+1);
-  o.status="cancelled";
-  await salvaPedido(o,devolve?"Pedido cancelado. Estoque devolvido.":"Pedido cancelado.",devolve);
+  if(await pedEstoque(o,"cancelar")) toast(devolve?"Pedido cancelado. Estoque devolvido.":"Pedido cancelado.");
 }
 function botoesEtapa(o){
   const e=etapaPed(o), b=(txt,bg,cor,fn)=>ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:bg,color:cor},onclick:fn},txt);
@@ -1513,18 +1545,7 @@ function mkBadge(status){
 async function confirmOrder(id){
   const o=S.orders.find(x=>x.id===id);
   if(!o||o.status!=="pending") return;
-  if(!estoqueBaixado(o)) mexeEstoque(o,-1);
-  o.status="confirmed";
-  if(o.ref&&!o.comissao){ const a=S.afiliados.find(x=>x.codigo===o.ref); if(a) o.comissao=Math.round(o.total*(+a.comissao||0))/100; }
-  const c=S.crm.find(x=>samePhone(x.phone,o.phone));
-  if(c){c.orders=(c.orders||0)+1;c.pending=Math.max(0,(c.pending||1)-1);c.lastOrder=o.date;}
-  lsSet("gs_prod",S.products); lsSet("gs_ord",S.orders); lsSet("gs_crm",S.crm);
-  render();
-  S.syncing=true; render();
-  const ok=await _post({action:"saveAll",products:prodsForSheet(),orders:S.orders,crm:S.crm});
-  S.syncing=false;
-  toast(ok?"✅ Pedido confirmado! Estoque atualizado na planilha.":"✅ Confirmado localmente. ⚠️ Erro na planilha.",ok?3000:5000);
-  render();
+  if(await pedEstoque(o,"confirmar")) toast("✅ Pedido confirmado! Estoque conferido na planilha.");
 }
 
 // ─── MANUAL ──────────────────────────────────────────────────────────────────
@@ -1667,7 +1688,7 @@ function buildManual(){
                      phone:S.manualPhone.trim()?phoneKey(S.manualPhone):"Loja física",items:S.manualCart.map(i=>({...i})),
                      total:manCalc().t,subtotal:manCalc().sub,desconto:manCalc().d,status:"pending",origin:"manual"};
         S.orders.unshift(order); crmUpsert(order);
-        persistOrders(); persistCRM();
+        persistOrders().then(ok=>{ if(ok) pedEstoque(order,"reservar"); }); persistCRM();
         S.manualCart=[]; S.manualName=""; S.manualPhone=""; S.manualSz={}; S.manualQty={}; S.manualDesc=""; S.manualDescTipo="R$";
         S.adminTab="orders"; toast("Pedido registrado!"); render();
       }},"✅ Registrar Pedido")):null;
