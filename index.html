@@ -1225,6 +1225,9 @@ function buildOrders(){
     ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"14px"}},
       ce("button",{class:"tab "+(filtro==="todos"?"on":"off"),onclick:()=>{S.pedFiltro="todos";render();}},`Todos (${S.orders.length})`),
       ...ETAPAS.map(([k,l])=>{ const n=cont(k); return n||filtro===k?ce("button",{class:"tab "+(filtro===k?"on":"off"),onclick:()=>{S.pedFiltro=k;render();}},`${l} (${n})`):null; })),
+    ["confirmado","pago","pronto"].includes(filtro)&&lista.length?ce("div",{class:"card",style:{display:"flex",gap:"10px",alignItems:"center",flexWrap:"wrap",marginBottom:"12px"}},
+      ce("span",{style:{flex:"1",fontSize:"13px"}},`Já entregou todos estes ${lista.length} pedidos?`),
+      ce("button",{class:"btn",style:{padding:"8px 16px",fontSize:"13px",borderRadius:"20px",background:"#37474f",color:"#fff"},onclick:()=>finalizaLote(lista)},`🏁 Finalizar todos (${lista.length})`)):null,
     lista.length===0?ce("div",{style:{color:"#aaa",padding:"30px 0",textAlign:"center"}},S.orders.length?"Nenhum pedido nesta etapa.":"Nenhum pedido ainda."):
     ce("div",{},...lista.map(o=>{
       const bc=(ETAPA_COR[etapaPed(o)]||ETAPA_COR.aguardando)[2];
@@ -1475,6 +1478,14 @@ async function setEtapa(o,e){
   o.pagamento={...(o.pagamento||{}),_etapa:e};
   await salvaPedido(o,e==="pronto"?"📦 Pedido pronto para retirada!":"🏁 Pedido finalizado!",baixou);
   if(e==="pronto"&&keyOk(phoneKey(o.phone))&&confirm("Avisar o cliente no WhatsApp que o pedido está pronto?")) openPedidoMsg(o,"retirada");
+}
+async function finalizaLote(lista){
+  const alvo=lista.filter(o=>o.status==="confirmed");
+  if(!alvo.length) return;
+  if(!confirm(`Marcar ${alvo.length} pedido${alvo.length>1?"s":""} como finalizado (entregue)? O estoque e os pagamentos não mudam.`)) return;
+  alvo.forEach(o=>{ o.pagamento={...(o.pagamento||{}),_etapa:"finalizado"}; });
+  S.pedFiltro="finalizado";
+  await salvaPedido(null,`🏁 ${alvo.length} pedido${alvo.length>1?"s":""} finalizado${alvo.length>1?"s":""}!`,false);
 }
 async function cancelaPedido(o){
   const devolve=estoqueBaixado(o);
