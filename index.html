@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-25d";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-25e";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -2982,7 +2982,7 @@ function credNovo(pre){
   const lbl=t=>ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",margin:"10px 0 4px"}},t);
   const inp=(k,type="text",extra={})=>{ const i=ce("input",{class:"inp",type,...extra}); i.value=f[k]; i.addEventListener("input",()=>{f[k]=i.value;atualiza();}); return i; };
   const aviso=ce("div",{}), prev=ce("div",{}), selPed=ce("select",{class:"inp"});
-  const nomeInp=inp("nome","text",{placeholder:"Digite o nome ou o telefone...",autocomplete:"off"});
+  const nomeInp=inp("nome","text",{placeholder:"🔍 Buscar por nome ou telefone",autocomplete:"off"});
   // Busca de clientes (CRM + quem já comprou a prazo), por nome ou telefone, sem render()
   const nomeWrap=ce("div",{style:{position:"relative"}},nomeInp), drop=ce("div",{class:"ac-drop",style:{display:"none"}});
   nomeWrap.appendChild(drop);
@@ -3078,11 +3078,11 @@ function credNovo(pre){
     credWhats(c,credTextoParcelas(c),"📄 Enviar as parcelas para a cliente");
   };
   montaPedidos();
-  const grid=(...k)=>ce("div",{style:{display:"grid",gridTemplateColumns:`repeat(${k.length},1fr)`,gap:"10px"}},...k);
+  const grid=(...k)=>ce("div",{style:{display:"grid",gridTemplateColumns:`repeat(${k.length},minmax(0,1fr))`,gap:"10px",alignItems:"end"}},...k);
   openModal(ce("div",{},
     ce("div",{style:{fontWeight:800,fontSize:"16px",marginBottom:"4px"}},"💳 Nova venda a prazo"),
     ce("div",{style:{fontSize:"12px",color:"#888"}},"As parcelas são geradas automaticamente e podem ser ajustadas depois."),
-    grid(ce("div",{},lbl("Cliente * (buscar pelo nome ou telefone)"),nomeWrap),ce("div",{},lbl("WhatsApp com DDD *"),phoneInp)),
+    grid(ce("div",{},lbl("Cliente *"),nomeWrap),ce("div",{},lbl("WhatsApp com DDD *"),phoneInp)),
     aviso,
     lbl("Vincular a um pedido (opcional)"),selPed,
     ce("div",{style:{fontSize:"11px",color:"#888",marginTop:"3px"}},"Pedido vinculado que estiver aguardando é confirmado na hora, para a reserva de 48 h não cancelar a venda."),
@@ -3309,9 +3309,9 @@ function npModal(c){
   const lbl=t=>ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",margin:"8px 0 3px"}},t);
   const campo=(o,k,t,ph="",extra={})=>{ const i=ce("input",{class:"inp",placeholder:ph,...extra}); i.value=o[k]||""; i.addEventListener("input",()=>{o[k]=i.value;}); return ce("div",{},lbl(t),i); };
   const sel=(o,k,t,ops)=>{ const s=ce("select",{class:"inp",onchange:e=>{o[k]=e.target.value;}},ce("option",{value:""},"Selecione"),...ops.map(v=>{ const op=ce("option",{value:v},v); if(o[k]===v) op.selected=true; return op; })); return ce("div",{},lbl(t),s); };
-  const g=(...k)=>ce("div",{style:{display:"grid",gridTemplateColumns:`repeat(${k.length},1fr)`,gap:"10px"}},...k);
+  const g=(...k)=>ce("div",{style:{display:"grid",gridTemplateColumns:`repeat(${k.length},minmax(0,1fr))`,gap:"10px",alignItems:"end"}},...k);
   const pessoa=(o)=>[
-    ce("div",{style:{display:"grid",gridTemplateColumns:"2fr 1fr",gap:"10px"}},campo(o,"nome","Nome completo *","Como está no documento"),sel(o,"sexo","Tratamento",["Feminino","Masculino"])),
+    ce("div",{style:{display:"grid",gridTemplateColumns:"minmax(0,2fr) minmax(0,1fr)",gap:"10px",alignItems:"end"}},campo(o,"nome","Nome completo *","Como está no documento"),sel(o,"sexo","Tratamento",["Feminino","Masculino"])),
     g(campo(o,"cpf","CPF *","000.000.000-00",{inputmode:"numeric"}),campo(o,"rg","RG","Número"),campo(o,"orgao","Órgão/UF","SSP/AP")),
     g(campo(o,"nacionalidade","Nacionalidade"),sel(o,"estadoCivil","Estado civil",ESTADOS_CIVIS),campo(o,"profissao","Profissão")),
     campo(o,"endereco","Endereço (rua, número, complemento) *","Av. Exemplo, 123, casa B"),
