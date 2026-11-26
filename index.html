@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-25b";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-25c";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -3233,13 +3233,12 @@ function npDadosAnteriores(c){
 async function npGerarPDF(c,cfg){
   await carregaJsPDF();
   const {jsPDF}=window.jspdf, doc=new jsPDF({unit:"mm",format:"a4"});
-  const cred=cfg.credor, cli=c.cliente, av=cfg.comAval?c.avalista:null;
+  const cred=cfg.credor, cli=c.cliente;
   const r=credResumo(c);
   const notas=cfg.modo==="unica"
     ?[{num:"1/1",venc:cfg.vencUnica,valor:r.saldo}]
     :r.abertas.map(p=>({num:`${p.n}/${r.total}`,venc:p.venc,valor:p.rest}));
-  const W=210, M=14, H=av?(av.conjuge?272:200):132; // altura de cada nota
-  const porPag=av?1:2;
+  const W=210, M=14, H=132, porPag=2; // duas notas por folha
   notas.forEach((n,i)=>{
     if(i&&i%porPag===0) doc.addPage();
     let y=M+(i%porPag)*(H+6), x=M, w=W-2*M;
@@ -3264,25 +3263,11 @@ async function npGerarPDF(c,cfg){
     par(npQualifica(cli),9.5,false,3);
     par(`Local e data da emissão: ${cfg.praca}, ${dataExt(cfg.emissao)}.`,10,false,0);
     // assinatura do emitente
-    const ay=Math.max(ty+14,y+(av?96:H-14));
+    const ay=Math.max(ty+14,y+H-14);
     doc.setLineWidth(0.3); doc.line(x+w/2-55,ay,x+w/2+55,ay);
     doc.setFontSize(9); doc.setFont("helvetica","normal");
     doc.text(`${String(cli.nome).toUpperCase()}  •  CPF ${cpfFmt(cli.cpf)}`,x+w/2,ay+4.5,{align:"center"});
     doc.text("Assinatura do emitente",x+w/2,ay+8.5,{align:"center"});
-    if(av){
-      ty=ay+18;
-      par("POR AVAL AO EMITENTE:",9,true,0.5);
-      par(npQualifica(av),9.5,false,2);
-      const by=ty+14; doc.line(x+w/2-55,by,x+w/2+55,by);
-      doc.setFontSize(9); doc.text(`${String(av.nome).toUpperCase()}  •  CPF ${cpfFmt(av.cpf)}`,x+w/2,by+4.5,{align:"center"});
-      doc.text("Assinatura do avalista",x+w/2,by+8.5,{align:"center"});
-      if(av.conjuge){
-        ty=by+16;
-        par(`Outorga conjugal (Código Civil, art. 1.647, III): ${String(av.conjuge).toUpperCase()}${av.conjugeCpf?`, CPF nº ${cpfFmt(av.conjugeCpf)}`:""}, cônjuge do avalista, autoriza o aval acima.`,9,false,2);
-        const cy=ty+12; doc.line(x+w/2-55,cy,x+w/2+55,cy);
-        doc.text("Assinatura do cônjuge do avalista",x+w/2,cy+4.5,{align:"center"});
-      }
-    }
   });
   const nomeArq=`Promissoria${notas.length>1?"s":""} ${cli.nome} ${dataBR(cfg.emissao).replace(/\//g,"-")}.pdf`;
   doc.save(nomeArq);
@@ -3293,32 +3278,26 @@ function npModal(c){
   if(!r.abertas.length) return toast("Esta venda não tem parcelas em aberto.");
   const ant=npDadosAnteriores(c);
   const cli={nome:c.nome,sexo:"Feminino",cpf:"",rg:"",orgao:"",nacionalidade:"brasileiro(a)",estadoCivil:"",profissao:"",endereco:"",bairro:"",cidade:"Macapá",uf:"AP",cep:"",...(ant||{}),...(c.cliente||{})};
-  const av={nome:"",sexo:"",cpf:"",rg:"",orgao:"",nacionalidade:"brasileiro(a)",estadoCivil:"",profissao:"",endereco:"",bairro:"",cidade:"Macapá",uf:"AP",cep:"",conjuge:"",conjugeCpf:"",...(c.avalista||{})};
-  const cfg={modo:"parcelas",emissao:toDay(),praca:npCredor().praca,vencUnica:r.abertas[r.abertas.length-1].venc,comAval:!!(c.avalista&&c.avalista.nome),credor:npCredor()};
+  const cfg={modo:"parcelas",emissao:toDay(),praca:npCredor().praca,vencUnica:r.abertas[r.abertas.length-1].venc,credor:npCredor()};
   const lbl=t=>ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",margin:"8px 0 3px"}},t);
   const campo=(o,k,t,ph="",extra={})=>{ const i=ce("input",{class:"inp",placeholder:ph,...extra}); i.value=o[k]||""; i.addEventListener("input",()=>{o[k]=i.value;}); return ce("div",{},lbl(t),i); };
   const sel=(o,k,t,ops)=>{ const s=ce("select",{class:"inp",onchange:e=>{o[k]=e.target.value;}},ce("option",{value:""},"Selecione"),...ops.map(v=>{ const op=ce("option",{value:v},v); if(o[k]===v) op.selected=true; return op; })); return ce("div",{},lbl(t),s); };
   const g=(...k)=>ce("div",{style:{display:"grid",gridTemplateColumns:`repeat(${k.length},1fr)`,gap:"10px"}},...k);
   const pessoa=(o)=>[
-    g(ce("div",{style:{gridColumn:"span 2"}},campo(o,"nome","Nome completo *","Como está no documento")),sel(o,"sexo","Tratamento",["Feminino","Masculino"])),
+    ce("div",{style:{display:"grid",gridTemplateColumns:"2fr 1fr",gap:"10px"}},campo(o,"nome","Nome completo *","Como está no documento"),sel(o,"sexo","Tratamento",["Feminino","Masculino"])),
     g(campo(o,"cpf","CPF *","000.000.000-00",{inputmode:"numeric"}),campo(o,"rg","RG","Número"),campo(o,"orgao","Órgão/UF","SSP/AP")),
     g(campo(o,"nacionalidade","Nacionalidade"),sel(o,"estadoCivil","Estado civil",ESTADOS_CIVIS),campo(o,"profissao","Profissão")),
     campo(o,"endereco","Endereço (rua, número, complemento) *","Av. Exemplo, 123, casa B"),
     g(campo(o,"bairro","Bairro"),campo(o,"cidade","Cidade *"),sel(o,"uf","UF *",UFS),campo(o,"cep","CEP","68900-000",{inputmode:"numeric"}))];
-  const avBox=ce("div",{style:{display:cfg.comAval?"block":"none",background:"#faf5f8",borderRadius:"12px",padding:"4px 12px 12px",marginTop:"8px"}},
-    ...pessoa(av),
-    ce("div",{style:{fontSize:"11.5px",color:"#888",marginTop:"8px"}},"Avalista casado(a), exceto no regime de separação absoluta, precisa da autorização do cônjuge (Código Civil, art. 1.647, III). Sem ela o aval pode ser anulado."),
-    g(campo(av,"conjuge","Nome do cônjuge do avalista"),campo(av,"conjugeCpf","CPF do cônjuge","",{inputmode:"numeric"})));
   const unicaBox=ce("div",{style:{display:"none"}},ce("div",{},lbl("Vencimento da nota única"),(()=>{ const i=ce("input",{class:"inp",type:"date"}); i.value=cfg.vencUnica; i.addEventListener("input",()=>{cfg.vencUnica=i.value;}); return i; })()));
   const modoSel=ce("select",{class:"inp",onchange:e=>{cfg.modo=e.target.value;unicaBox.style.display=cfg.modo==="unica"?"block":"none";}},
     ce("option",{value:"parcelas"},`Uma nota por parcela em aberto (${r.abertas.length})`),ce("option",{value:"unica"},`Uma nota única do saldo (${fmt(r.saldo)})`));
   const emis=ce("input",{class:"inp",type:"date"}); emis.value=cfg.emissao; emis.addEventListener("input",()=>{cfg.emissao=emis.value;});
   const gerar=async(btn)=>{
-    const falta=npFaltando(cli,"emitente").concat(cfg.comAval?npFaltando(av,"avalista"):[]);
+    const falta=npFaltando(cli,"emitente");
     const dd=String(cfg.credor.doc).replace(/\D/g,"");
     if(!((dd.length===11&&cpfOk(dd))||dd.length===14)) falta.push("CPF ou CNPJ do credor");
     if(!String(cfg.credor.nome).trim()) falta.push("nome do credor");
-    if(cfg.comAval&&av.conjuge&&av.conjugeCpf&&!cpfOk(av.conjugeCpf)) falta.push("CPF válido do cônjuge do avalista");
     if(!/^\d{4}-\d{2}-\d{2}$/.test(cfg.emissao)) falta.push("data da emissão");
     if(cfg.modo==="unica"&&!/^\d{4}-\d{2}-\d{2}$/.test(cfg.vencUnica)) falta.push("vencimento da nota única");
     if(falta.length) return toast("Falta: "+falta.join(", ")+".",6000);
@@ -3327,16 +3306,14 @@ function npModal(c){
     if(String(cli.cpf).replace(/\D/g,"")===String(cfg.credor.doc).replace(/\D/g,"")) return toast("O CPF do emitente não pode ser o do credor.");
     lsSet("gs_np_credor",{nome:cfg.credor.nome,doc:cfg.credor.doc,praca:cfg.praca});
     c.cliente={...cli,cpf:cpfFmt(cli.cpf),cep:cepFmt(cli.cep)};
-    c.avalista=cfg.comAval?{...av,cpf:cpfFmt(av.cpf),cep:cepFmt(av.cep),conjugeCpf:cpfFmt(av.conjugeCpf)}:null;
     if(String(c.cliente.nome).trim()&&c.cliente.nome!==c.nome&&!c.nome.includes(" ")) c.nome=c.cliente.nome;
     btn.disabled=true; btn.textContent="Gerando PDF...";
     try{
       const n=await npGerarPDF(c,cfg);
-      c.promissorias=[...(c.promissorias||[]),{data:toDay(),modo:cfg.modo,qtd:n,aval:!!cfg.comAval}];
+      c.promissorias=[...(c.promissorias||[]),{data:toDay(),modo:cfg.modo,qtd:n}];
       closeModal(); persistCred(`📜 ${n} nota${n>1?"s":""} promissória${n>1?"s":""} gerada${n>1?"s":""}! Imprima e colha a assinatura.`);
     }catch(e){ btn.disabled=false; btn.textContent="📜 Gerar PDF"; toast("Não consegui gerar o PDF. Confira a internet e tente de novo.",5000); }
   };
-  const avChk=ce("input",{type:"checkbox",checked:cfg.comAval,onchange:e=>{cfg.comAval=e.target.checked;avBox.style.display=cfg.comAval?"block":"none";}});
   const btn=ce("button",{class:"btn",style:{flex:1,padding:"12px 0",borderRadius:"28px",background:PINK,color:"#fff",fontSize:"14px"}},"📜 Gerar PDF");
   btn.addEventListener("click",()=>gerar(btn));
   const credBox=ce("details",{style:{marginTop:"10px",fontSize:"12.5px"}},
@@ -3350,8 +3327,6 @@ function npModal(c){
     ant&&!c.cliente?ce("div",{style:{background:"#e8f5e9",color:"#2e7d32",borderRadius:"10px",padding:"7px 12px",fontSize:"12px",fontWeight:600}},"✅ Dados preenchidos com a compra anterior desta cliente. Confira."):null,
     ce("div",{style:{fontWeight:700,fontSize:"13px",marginTop:"10px"}},"Emitente (cliente que assina)"),
     ...pessoa(cli),
-    ce("label",{style:{display:"flex",gap:"8px",alignItems:"center",fontSize:"13px",margin:"12px 0 0",cursor:"pointer",fontWeight:600}},avChk,"Incluir avalista (fiador da nota)"),
-    avBox,
     g(ce("div",{},lbl("Formato"),modoSel),ce("div",{},lbl("Data da emissão"),emis)),
     unicaBox,
     credBox,
