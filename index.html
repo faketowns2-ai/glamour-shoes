@@ -3241,7 +3241,8 @@ function npQualifica(p,papel){
   const fx=t=>String(t||"").replace(/o\(a\)/g,p.sexo==="Feminino"?"a":p.sexo==="Masculino"?"o":"o(a)").replace(/r\(a\)/g,p.sexo==="Feminino"?"ra":p.sexo==="Masculino"?"r":"r(a)");
   const nac=fx(p.nacionalidade||"brasileiro(a)"), ec=p.estadoCivil==="união estável"?"convivente em união estável":fx(p.estadoCivil);
   const end=[p.endereco,p.bairro?`bairro ${p.bairro}`:"",`${p.cidade}/${p.uf}`,p.cep?`CEP ${cepFmt(p.cep)}`:""].filter(Boolean).join(", ");
-  return [String(p.nome).toUpperCase(),nac,ec,p.profissao,fx(`inscrito(a) no CPF sob o nº ${cpfFmt(p.cpf)}`),
+  const branco="______________________";
+  return [String(p.nome).toUpperCase(),nac,ec||`estado civil ${branco}`,String(p.profissao||"").trim()||`profissão ${branco}`,fx(`inscrito(a) no CPF sob o nº ${cpfFmt(p.cpf)}`),
     p.rg?fx(`portador(a) do RG nº ${p.rg}${p.orgao?" "+p.orgao:""}`):"",fx(`residente e domiciliado(a) em ${end}`)].filter(Boolean).join(", ")+".";
 }
 function npFaltando(p,quem){
@@ -3395,7 +3396,7 @@ function npDesenhaNota(doc,n,cli,cred,cfg,pos,ref){
   ty+=5;
   const cel=(cx,cw,rot,val,h=9.5,linhas=1)=>{ doc.setFillColor(255,255,255); doc.setDrawColor(...LINHA); doc.setLineWidth(0.2); doc.rect(cx,ty,cw,h,"FD");
     fonte("normal",5.8); cor(CINZA); doc.text(rot.toUpperCase(),cx+1.8,ty+3);
-    fonte("bold",8.8); cor(PRETO); const v=String(val||"-");
+    fonte("bold",8.8); cor(PRETO); const v=String(val===null?"":val||"-");
     if(linhas>1){ let sz=8.8, LL; do{ doc.setFontSize(sz); LL=doc.splitTextToSize(v,cw-3.6); sz-=0.25; }while(LL.length>linhas&&sz>6.5); doc.text(LL.slice(0,linhas),cx+1.8,ty+6.8,{lineHeightFactor:1.15}); }
     else { cabe(v,cw-3.6,8.8); doc.text(v,cx+1.8,ty+7.2); } };
   cel(gx,gw*0.68,"Nome completo",String(cli.nome).toUpperCase()); cel(gx+gw*0.68,gw*0.32,"CPF",cpfFmt(cli.cpf)); ty+=9.5;
@@ -3404,7 +3405,7 @@ function npDesenhaNota(doc,n,cli,cred,cfg,pos,ref){
   const ec=cli.estadoCivil==="união estável"?"união estável":fx(cli.estadoCivil);
   const q=gw/4;
   cel(gx,q,"RG / Órgão",cli.rg?`${cli.rg}${cli.orgao?" "+cli.orgao:""}`:""); cel(gx+q,q,"Nacionalidade",fx(cli.nacionalidade||"brasileiro(a)"));
-  cel(gx+2*q,q,"Estado civil",ec); cel(gx+3*q,q,"Profissão",cli.profissao); ty+=9.5;
+  cel(gx+2*q,q,"Estado civil",ec||null); cel(gx+3*q,q,"Profissão",String(cli.profissao||"").trim()||null); ty+=9.5;
   doc.setDrawColor(...PRETO); doc.setLineWidth(0.3); doc.rect(gx,ty-36.5,gw,36.5);
 
   cor(PRETO); npTextoRico(doc,[["Local e data da emissão: ",0],[`${cfg.praca}, ${dataExt(cfg.emissao)}`,1],[".",0]],tx,ty+5.5,tw,9.5,1.3,false);
@@ -3480,12 +3481,12 @@ function docBox(preenche,cli,onCpf){
     ce("div",{style:{display:"flex",gap:"8px"}},b1,b2),i1,i2,msg,
     ce("div",{style:{fontSize:"11px",color:"#888",marginTop:"6px"}},"As fotos não ficam salvas: são lidas na hora e descartadas (LGPD)."));
 }
-function npModal(c){
+function npModal(c,editar=false){
   const r=credResumo(c);
-  if(!r.abertas.length) return toast("Esta venda não tem parcelas em aberto.");
+  if(!editar&&!r.abertas.length) return toast("Esta venda não tem parcelas em aberto.");
   const ant=npDadosAnteriores(c);
   const cli={nome:c.nome,sexo:"Feminino",cpf:"",rg:"",orgao:"",nacionalidade:"brasileiro(a)",estadoCivil:"",profissao:"",endereco:"",bairro:"",cidade:"Macapá",uf:"AP",cep:"",...(ant||{}),...(c.cliente||{})};
-  const cfg={modo:"parcelas",emissao:toDay(),praca:npCredor().praca,vencUnica:r.abertas[r.abertas.length-1].venc,credor:npCredor()};
+  const cfg={modo:"parcelas",emissao:toDay(),praca:npCredor().praca,vencUnica:(r.abertas[r.abertas.length-1]||{}).venc||toDay(),credor:npCredor()};
   const lbl=t=>ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",margin:"8px 0 3px"}},t);
   const refs={};   // campos do emitente, para o preenchimento automático
   const campo=(o,k,t,ph="",extra={})=>{ const i=ce("input",{class:"inp",placeholder:ph,...extra}); i.value=o[k]||""; i.addEventListener("input",()=>{o[k]=i.value;i.classList.remove("np-auto");if(o===cli&&k==="cpf") cpfVerifica();}); if(o===cli) refs[k]=i; return ce("div",{},lbl(t),i); };
@@ -3530,6 +3531,8 @@ function npModal(c){
     const vencs=cfg.modo==="unica"?[cfg.vencUnica]:r.abertas.map(p=>p.venc);
     if(vencs.some(v=>v<cfg.emissao)&&!confirm("Há vencimento anterior à data de emissão (parcela já vencida). A nota vai sair com esse vencimento passado, o que é válido, mas confira. Continuar?")) return;
     if(String(cli.cpf).replace(/\D/g,"")===String(cfg.credor.doc).replace(/\D/g,"")) return toast("O CPF do emitente não pode ser o do credor.");
+    const vazios=[!cli.estadoCivil&&"estado civil",!String(cli.profissao||"").trim()&&"profissão"].filter(Boolean);
+    if(vazios.length&&!confirm(`${vazios.join(" e ")} em branco. A nota vai sair com um espaço para preencher à caneta na hora da assinatura.\n\nOK = gerar assim  •  Cancelar = voltar e preencher agora`)) return;
     lsSet("gs_np_credor",{nome:cfg.credor.nome,doc:cfg.credor.doc,praca:cfg.praca});
     c.cliente={...cli,cpf:cpfFmt(cli.cpf),cep:cepFmt(cli.cep)};
     if(String(c.cliente.nome).trim()&&c.cliente.nome!==c.nome&&!c.nome.includes(" ")) c.nome=c.cliente.nome;
@@ -3542,25 +3545,34 @@ function npModal(c){
   };
   const btn=ce("button",{class:"btn",style:{flex:1,padding:"12px 0",borderRadius:"28px",background:PINK,color:"#fff",fontSize:"14px"}},"📜 Gerar PDF");
   btn.addEventListener("click",()=>gerar(btn));
+  // só salva os dados da cliente (sem gerar PDF): para completar estado civil, profissão etc. depois
+  const salvar=()=>{
+    if(String(cli.cpf||"").replace(/\D/g,"").length&&!cpfOk(cli.cpf)) return toast("CPF inválido: confira os números.");
+    c.cliente={...cli,cpf:cpfFmt(cli.cpf),cep:cepFmt(cli.cep)};
+    if(String(c.cliente.nome).trim()&&c.cliente.nome!==c.nome&&!c.nome.includes(" ")) c.nome=c.cliente.nome;
+    closeModal(); persistCred("💾 Dados da cliente salvos.");
+  };
+  const btnSalvar=ce("button",{class:"btn",style:{flex:editar?1:"none",padding:"12px 16px",borderRadius:"28px",background:editar?PINK:"#fff",color:editar?"#fff":PINK,border:`1.5px solid ${PINK}`,fontSize:"14px"},onclick:salvar},"💾 Salvar dados");
   const credBox=ce("details",{style:{marginTop:"10px",fontSize:"12.5px"}},
     ce("summary",{style:{cursor:"pointer",fontWeight:600}},`Credor (quem recebe): ${cfg.credor.nome}`),
     campo(cfg.credor,"nome","Nome do credor"),
     g(campo(cfg.credor,"doc","CPF ou CNPJ do credor"),campo(cfg,"praca","Lugar de emissão e pagamento")),
     ce("div",{style:{fontSize:"11.5px",color:"#888",marginTop:"6px"}},"Quando a Glamour Shoes LTDA tiver CNPJ, troque aqui pelo nome e CNPJ da empresa."));
   openModal(ce("div",{},
-    ce("div",{style:{fontWeight:800,fontSize:"16px",marginBottom:"2px"}},"📜 Nota promissória"),
-    ce("div",{style:{fontSize:"12px",color:"#888",marginBottom:"6px"}},`${c.nome} • saldo ${fmt(r.saldo)} em ${r.abertas.length} parcela(s)`),
+    ce("div",{style:{fontWeight:800,fontSize:"16px",marginBottom:"2px"}},editar?"✏️ Dados da cliente":"📜 Nota promissória"),
+    ce("div",{style:{fontSize:"12px",color:"#888",marginBottom:"6px"}},editar?`${c.nome} • qualificação usada na promissória`:`${c.nome} • saldo ${fmt(r.saldo)} em ${r.abertas.length} parcela(s)`),
     ant&&!c.cliente?ce("div",{style:{background:"#e8f5e9",color:"#2e7d32",borderRadius:"10px",padding:"7px 12px",fontSize:"12px",fontWeight:600}},"✅ Dados preenchidos com a compra anterior desta cliente. Confira."):null,
     ce("div",{style:{fontWeight:700,fontSize:"13px",marginTop:"10px"}},"Emitente (cliente que assina)"),
     docBox(preenche,cli,cpfVerifica),
     ...pessoa(cli),
     cpfMsg,
-    g(ce("div",{},lbl("Formato"),modoSel),ce("div",{},lbl("Data da emissão"),emis)),
-    unicaBox,
-    credBox,
+    editar?null:g(ce("div",{},lbl("Formato"),modoSel),ce("div",{},lbl("Data da emissão"),emis)),
+    editar?null:unicaBox,
+    editar?null:credBox,
     ce("div",{style:{fontSize:"11.5px",color:"#888",margin:"10px 0 14px",lineHeight:"1.45"}},
+      editar?"Campo deixado em branco sai na promissória com um espaço para preencher à caneta. Dados pessoais usados só para esta venda (LGPD).":
       "A cliente assina cada nota à mão, de preferência na loja, com documento com foto conferido. Guarde a via original: na execução o título original é que vale. Dados pessoais usados só para esta venda (LGPD)."),
-    ce("div",{style:{display:"flex",gap:"10px"}},btn,
+    ce("div",{style:{display:"flex",gap:"10px",flexWrap:"wrap"}},editar?null:btn,btnSalvar,
       ce("button",{class:"btn",style:{padding:"12px 18px",borderRadius:"24px",background:"#eee",color:"#1a1a2e"},onclick:closeModal},"Cancelar"))));
 }
 
@@ -3654,6 +3666,7 @@ function credCard(c,r){
         b("📄 Enviar parcelas","#e3f2fd","#1565c0",()=>credWhats(c,credTextoParcelas(c),"📄 Resumo das parcelas")),
         b("🖨 Carnê","#e3f2fd","#1565c0",()=>credCarne(c)),
         r.abertas.length&&!c.cancelado?b("📜 Promissória","#fff8e1","#8d6e00",()=>npModal(c)):null,
+        b("✏️ Dados da cliente","#eeeeee","#1a1a2e",()=>npModal(c,true)),
         c.pedido?b("🧾 Ver pedido","#eeeeee","#1a1a2e",()=>{S.adminTab="orders";S.pedFiltro="todos";render();}):null,
         c.cancelado?b("Reativar","#eeeeee","#1a1a2e",()=>credReativar(c)):b(r.recebido>0?"Cancelar venda":"🗑 Excluir","#ffebee","#c62828",()=>credCancelar(c)))):null);
 }
