@@ -3166,12 +3166,43 @@ function credEditarParc(c,n){
       }},"Salvar"),
       ce("button",{class:"btn",style:{padding:"12px 18px",borderRadius:"24px",background:"#eee",color:"#1a1a2e"},onclick:closeModal},"Cancelar"))));
 }
+// Exclusão definitiva (venda teste, lançada errado, duplicada). Some da planilha e dos relatórios.
+// Com pagamento registrado, exige digitar EXCLUIR, para não apagar recebimento real por engano.
+function credExcluir(c){
+  const r=credResumo(c);
+  const pagos=r.recebido>0;
+  const nProm=(c.promissorias||[]).reduce((s,x)=>s+(+x.qtd||1),0);
+  const conf=ce("input",{class:"inp",placeholder:"Digite EXCLUIR",autocomplete:"off",style:{textTransform:"uppercase",marginTop:"6px"}});
+  const linha=(k,v)=>ce("div",{style:{fontSize:"13px",padding:"3px 0"}},ce("strong",{},k+": "),v);
+  const btnOk=ce("button",{class:"btn",style:{flex:1,padding:"12px 0",borderRadius:"28px",background:"#c62828",color:"#fff"},onclick:async()=>{
+    if(pagos&&conf.value.trim().toUpperCase()!=="EXCLUIR") return toast("Digite EXCLUIR para confirmar.");
+    S.cred=S.cred.filter(x=>String(x.id)!==String(c.id));
+    if(S.credOpen===c.id) S.credOpen=null;
+    closeModal();
+    await persistCred("🗑 Venda a prazo excluída.");
+  }},"🗑 Excluir definitivamente");
+  openModal(ce("div",{},
+    ce("div",{style:{fontWeight:800,fontSize:"16px",marginBottom:"8px",color:"#c62828"}},"🗑 Excluir venda a prazo?"),
+    ce("div",{style:{background:"#fafafa",borderRadius:"10px",padding:"10px 12px",marginBottom:"10px"}},
+      linha("Cliente",`${c.nome} • ${phoneFmt(c.phone)}`),
+      linha("Compra",`${dataBR(c.criado)} • ${fmt(c.total)}${c.descricao?` • ${c.descricao}`:""}`),
+      linha("Parcelas",`${r.pagas}/${r.total} pagas • saldo ${fmt(r.saldo)}`),
+      pagos?linha("Já recebido",fmt(r.recebido)):null,
+      nProm?linha("Promissórias geradas",String(nProm)):null),
+    ce("div",{style:{fontSize:"12.5px",color:"#555",lineHeight:1.5,marginBottom:"10px"}},
+      "A venda, as parcelas e o histórico de cobrança são apagados da planilha. Não dá para desfazer.",
+      c.pedido?ce("div",{style:{marginTop:"6px"}},"O pedido vinculado continua como está. Se também foi teste, cancele-o na aba Pedidos."):null,
+      nProm?ce("div",{style:{marginTop:"6px"}},"Se alguma promissória já foi assinada, rasgue a via impressa."):null),
+    pagos?ce("div",{style:{background:"#ffebee",borderRadius:"10px",padding:"10px 12px",marginBottom:"12px",fontSize:"12.5px",color:"#c62828"}},
+      `Esta venda tem ${fmt(r.recebido)} recebidos. Se for uma venda real, prefira "Cancelar venda", que mantém os pagamentos registrados. Para excluir mesmo assim, digite EXCLUIR:`,conf):null,
+    ce("div",{style:{display:"flex",gap:"10px"}},
+      ce("button",{class:"btn",style:{flex:1,padding:"12px 0",borderRadius:"28px",background:"#eee",color:"#1a1a2e"},onclick:closeModal},"Voltar"),
+      btnOk)));
+}
 function credCancelar(c){
   const r=credResumo(c);
   const pagos=r.recebido>0;
-  if(!pagos&&confirm(`Excluir a venda a prazo de ${c.nome} (${fmt(c.total)})? Nenhum pagamento foi registrado nela.`)){
-    S.cred=S.cred.filter(x=>x!==c); return persistCred("🗑 Venda a prazo excluída.");
-  }
+  if(!pagos) return credExcluir(c);
   if(pagos&&confirm(`Cancelar a venda a prazo de ${c.nome}? As parcelas em aberto (${fmt(r.saldo)}) deixam de ser cobradas. O que já foi recebido continua registrado.`)){
     c.cancelado=true; c.canceladoEm=toDay(); persistCred("Venda a prazo cancelada.");
   }
@@ -3646,7 +3677,8 @@ function credCard(c,r){
       r.status==="atrasado"||r.status==="em_dia"?b("💬 Cobrar","#25d366","#fff",()=>credCobrar(c)):null,
       (r.venc.length||r.prox)&&r.status!=="cancelado"?b(`✅ Receber ${r.venc.length?r.venc[0].n:r.prox.n}/${r.total}`,"#2e7d32","#fff",()=>credBaixar(c,(r.venc[0]||r.prox).n)):null,
       r.abertas.length&&!c.cancelado?b(c.promissorias&&c.promissorias.length?"📜 Promissória ✓":"📜 Promissória","#fff8e1","#8d6e00",()=>npModal(c)):null,
-      b(aberto?"▲ Fechar":"▼ Parcelas","#f3e5f5","#6a1b9a",()=>{S.credOpen=aberto?null:c.id;render();})),
+      b(aberto?"▲ Fechar":"▼ Parcelas","#f3e5f5","#6a1b9a",()=>{S.credOpen=aberto?null:c.id;render();}),
+      b("🗑 Excluir","#ffebee","#c62828",()=>credExcluir(c))),
     aberto?ce("div",{style:{marginTop:"12px",borderTop:"1px solid #eee",paddingTop:"10px"}},
       ...r.ps.map(p=>ce("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",flexWrap:"wrap",padding:"7px 0",borderBottom:"1px solid #f3f3f3"}},
         ce("div",{style:{flex:"1 1 200px",fontSize:"13px"}},
@@ -3668,7 +3700,7 @@ function credCard(c,r){
         r.abertas.length&&!c.cancelado?b("📜 Promissória","#fff8e1","#8d6e00",()=>npModal(c)):null,
         b("✏️ Dados da cliente","#eeeeee","#1a1a2e",()=>npModal(c,true)),
         c.pedido?b("🧾 Ver pedido","#eeeeee","#1a1a2e",()=>{S.adminTab="orders";S.pedFiltro="todos";render();}):null,
-        c.cancelado?b("Reativar","#eeeeee","#1a1a2e",()=>credReativar(c)):b(r.recebido>0?"Cancelar venda":"🗑 Excluir","#ffebee","#c62828",()=>credCancelar(c)))):null);
+        c.cancelado?b("Reativar","#eeeeee","#1a1a2e",()=>credReativar(c)):r.recebido>0?b("Cancelar venda","#fff3e0","#e65100",()=>credCancelar(c)):null)):null);
 }
 
 // ─── PAINEL DO AFILIADO (/afiliado#chave) ────────────────────────────────────
