@@ -3333,7 +3333,7 @@ function docBox(preenche,cli,onCpf){
   const linha=(txt,cor)=>msg.appendChild(ce("div",{style:{color:cor||"inherit",marginTop:"3px"}},txt));
   const botao=(tipo,rotulo,dica)=>{
     const inp=ce("input",{type:"file",accept:"image/*,application/pdf",style:{display:"none"}});
-    const b=ce("button",{class:"btn",type:"button",style:{flex:1,padding:"10px 8px",borderRadius:"12px",background:"#fff",color:"#1a1a2e",border:"1.5px dashed #c9a227",fontSize:"12.5px",lineHeight:"1.3"}},
+    const b=ce("button",{class:"btn",type:"button",style:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"2px",padding:"10px 8px",borderRadius:"12px",background:"#fff",color:"#1a1a2e",border:"1.5px dashed #c9a227",fontSize:"12.5px",lineHeight:"1.3",textAlign:"center"}},
       ce("div",{style:{fontWeight:700}},rotulo),ce("div",{style:{fontSize:"11px",color:"#888",fontWeight:500}},dica));
     b.addEventListener("click",()=>inp.click());
     inp.addEventListener("change",async()=>{
