@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-25c";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-25d";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -2982,7 +2982,34 @@ function credNovo(pre){
   const lbl=t=>ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",margin:"10px 0 4px"}},t);
   const inp=(k,type="text",extra={})=>{ const i=ce("input",{class:"inp",type,...extra}); i.value=f[k]; i.addEventListener("input",()=>{f[k]=i.value;atualiza();}); return i; };
   const aviso=ce("div",{}), prev=ce("div",{}), selPed=ce("select",{class:"inp"});
-  const nomeInp=inp("nome","text",{placeholder:"Nome da cliente"});
+  const nomeInp=inp("nome","text",{placeholder:"Digite o nome ou o telefone...",autocomplete:"off"});
+  // Busca de clientes (CRM + quem já comprou a prazo), por nome ou telefone, sem render()
+  const nomeWrap=ce("div",{style:{position:"relative"}},nomeInp), drop=ce("div",{class:"ac-drop",style:{display:"none"}});
+  nomeWrap.appendChild(drop);
+  const acN=t=>String(t||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
+  const baseClientes=()=>{ const m=new Map();
+    (S.crm||[]).forEach(c=>{ const k=phoneKey(c.phone); if(keyOk(k)&&String(c.name||"").trim()) m.set(k,{nome:c.name,phone:k,info:`${(+c.orders||0)+(+c.pending||0)} pedido(s)`}); });
+    S.cred.forEach(c=>{ const k=phoneKey(c.phone); if(!keyOk(k)) return; const r=credResumo(c), ex=m.get(k)||{nome:c.nome,phone:k,info:""};
+      if(!c.cancelado&&r.status!=="quitado") ex.info=(r.status==="atrasado"?"⚠️ em atraso ":"crediário aberto ")+fmt(r.saldo);
+      m.set(k,ex); });
+    return [...m.values()]; };
+  const mostraDrop=()=>{
+    const q=acN(nomeInp.value), qd=nomeInp.value.replace(/\D/g,"");
+    const L=q.length<2&&qd.length<3?[]:baseClientes().filter(x=>acN(x.nome).includes(q)||(qd.length>=3&&x.phone.includes(qd))).slice(0,8);
+    drop.innerHTML="";
+    if(!L.length){ drop.style.display="none"; return; }
+    L.forEach(x=>{ const row=ce("div",{class:"ac-row"},
+        ce("div",{},ce("div",{style:{fontWeight:600}},x.nome),ce("div",{style:{fontSize:"11px",color:"#aaa"}},phoneFmt(x.phone))),
+        ce("span",{style:{fontSize:"11px",color:/atraso/.test(x.info)?"#c62828":PINK,fontWeight:600,textAlign:"right"}},x.info));
+      row.addEventListener("mousedown",e=>{ e.preventDefault();
+        f.nome=x.nome; nomeInp.value=x.nome; f.phone=x.phone; phoneInp.value=phoneFmt(x.phone); phoneInp.style.borderColor="";
+        drop.style.display="none"; montaPedidos(); atualiza(); });
+      drop.appendChild(row); });
+    drop.style.display="block";
+  };
+  nomeInp.addEventListener("input",mostraDrop);
+  nomeInp.addEventListener("focus",mostraDrop);
+  nomeInp.addEventListener("blur",()=>setTimeout(()=>{drop.style.display="none";},150));
   const phoneInp=phoneInput(f.phone,v=>{
     f.phone=v;
     if(phoneValid(v)){ const c=S.crm.find(x=>samePhone(x.phone,v)); if(c&&String(c.name||"").trim()&&!f.nome.trim()){ f.nome=c.name; nomeInp.value=c.name; } }
@@ -3055,7 +3082,7 @@ function credNovo(pre){
   openModal(ce("div",{},
     ce("div",{style:{fontWeight:800,fontSize:"16px",marginBottom:"4px"}},"💳 Nova venda a prazo"),
     ce("div",{style:{fontSize:"12px",color:"#888"}},"As parcelas são geradas automaticamente e podem ser ajustadas depois."),
-    grid(ce("div",{},lbl("WhatsApp com DDD *"),phoneInp),ce("div",{},lbl("Nome *"),nomeInp)),
+    grid(ce("div",{},lbl("Cliente * (buscar pelo nome ou telefone)"),nomeWrap),ce("div",{},lbl("WhatsApp com DDD *"),phoneInp)),
     aviso,
     lbl("Vincular a um pedido (opcional)"),selPed,
     ce("div",{style:{fontSize:"11px",color:"#888",marginTop:"3px"}},"Pedido vinculado que estiver aguardando é confirmado na hora, para a reserva de 48 h não cancelar a venda."),
