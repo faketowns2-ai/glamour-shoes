@@ -361,3 +361,4 @@ body.adm a.adm-pill-btn:hover{color:#f6f3ff}
 .bf .fx-dica{color:var(--bf-muted)}
 .bf .fx-fechar{background:#26262a;color:var(--bf-text)}
 .fx-galeria{width:100%;padding:11px 0;border:2px solid #2e7d32;border-radius:30px;background:#fff;color:#2e7d32;font-weight:800;font-size:13px;cursor:pointer}
+.inp.np-auto{background:#fff8d6 !important;border-color:#e0b400 !important;color:#1a1a2e !important}
