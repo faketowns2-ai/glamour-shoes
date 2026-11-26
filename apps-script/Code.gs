@@ -14,6 +14,8 @@ const H_CRM  = ["id","name","phone","orders","pending","lastOrder","since"];
 const H_AFI  = ["codigo","nome","whatsapp","pix","comissao","ativo","criado","chave","status","instagram","cidade","aceite"];
 const H_CLQ  = ["codigo","data","cliques"];
 const H_SAQ  = ["id","codigo","nome","valor","pix","status","solicitadoEm","atualizadoEm","pedidos","obs"];
+// Crediário (vendas a prazo): uma linha por venda; parcelas e contatos de cobrança em JSON
+const H_CRED = ["id","nome","phone","descricao","pedido","total","entrada","entradaForma","criado","multa","juros","periodicidade","status","cancelado","canceladoEm","obs","parcelas","contatos"];
 const DIAS_LIBERACAO = 1;   // comissão fica disponível para saque 1 dia depois da venda
 const SAQUE_MINIMO   = 10;  // R$
 const COMISSAO_PADRAO = 20; // % de quem se cadastra pelo link público (o Admin pode mudar em Afiliados)
@@ -46,7 +48,7 @@ function handleRequest(e) {
         // Visitante não vê preço de custo, pedidos, clientes nem afiliados
         const prods = loadProducts(ss);
         const out = { ok: true, admin: admin, products: admin ? prods : prods.map(x => { const c = Object.assign({}, x); delete c.cost; return c; }) };
-        if (admin) { out.orders = loadOrders(ss); out.crm = loadCRM(ss); out.afiliados = withLock_(() => ensureChaves_(ss)); out.saques = loadSaques(ss); out.comissaoPadrao = comissaoPadrao_(); out.cliques = resumoCliques_(ss); }
+        if (admin) { out.orders = loadOrders(ss); out.crm = loadCRM(ss); out.afiliados = withLock_(() => ensureChaves_(ss)); out.saques = loadSaques(ss); out.comissaoPadrao = comissaoPadrao_(); out.cliques = resumoCliques_(ss); out.crediario = loadCrediario_(ss); }
         return json_(out);
       }
       case "login":      return json_(login_(p.pass));
@@ -85,6 +87,13 @@ function handleRequest(e) {
       case "novaChave": {
         if (!admin) return json_({ ok: false, auth: false, error: "Faça login novamente." });
         return json_(withLock_(() => novaChave_(ss, p.codigo)));
+      }
+      case "saveCrediario": {
+        if (!admin) return json_({ ok: false, auth: false, error: "Faça login novamente." });
+        const lista = typeof p.crediario === "string" ? JSON.parse(p.crediario) : p.crediario;
+        if (!Array.isArray(lista)) return json_({ ok: false, error: "Lista do crediário inválida." });
+        withLock_(() => saveCrediario_(ss, lista));
+        return json_({ ok: true });
       }
       case "saveProducts": case "saveOrders": case "saveCRM": case "saveAll": case "saveAfiliados": {
         if (!admin) return json_({ ok: false, auth: false, error: "Faça login novamente." });
@@ -883,3 +892,30 @@ function saqueStatus_(ss, id, status, obs) {
   return { ok: true, saques: loadSaques(ss) };
 }
 
+
+// ── CREDIÁRIO (VENDAS A PRAZO) ───────────────────────────────────────────────
+function loadCrediario_(ss) {
+  const t = readSheet_(ss, "Crediario");
+  if (!t) return [];
+  return t.rows.map(r => {
+    const o = rowObj_(t.hdr, r);
+    return { id: String(o.id), nome: String(o.nome || ""), phone: String(o.phone || ""), descricao: String(o.descricao || ""),
+             pedido: String(o.pedido || ""), total: Number(o.total || 0), entrada: Number(o.entrada || 0),
+             entradaForma: String(o.entradaforma || ""), criado: dataISO_(o.criado), multa: Number(o.multa || 0),
+             juros: Number(o.juros || 0), periodicidade: String(o.periodicidade || "mensal"), cancelado: bool_(o.cancelado),
+             canceladoEm: o.canceladoem ? dataISO_(o.canceladoem) : "", obs: String(o.obs || ""),
+             parcelas: parseJ_(o.parcelas, []), contatos: parseJ_(o.contatos, []) };
+  });
+}
+function statusCred_(c) {
+  if (c.cancelado) return "cancelado";
+  const aberta = (c.parcelas || []).some(p => (Number(p.valor) || 0) - (p.pagamentos || []).reduce((s, x) => s + (Number(x.valor) || 0), 0) > 0.004);
+  return aberta ? "aberto" : "quitado";
+}
+function saveCrediario_(ss, lista) {
+  // data em texto ('aaaa-mm-dd) para a planilha não converter
+  writeAll_(ss, "Crediario", H_CRED, lista.map(c => [String(c.id), c.nome || "", "'" + String(c.phone || ""), c.descricao || "", String(c.pedido || ""),
+    Number(c.total) || 0, Number(c.entrada) || 0, c.entradaForma || "", c.criado || "", Number(c.multa) || 0, Number(c.juros) || 0,
+    c.periodicidade || "mensal", statusCred_(c), !!c.cancelado, c.canceladoEm || "", c.obs || "",
+    JSON.stringify(c.parcelas || []), JSON.stringify(c.contatos || [])]));
+}

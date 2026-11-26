@@ -20,7 +20,7 @@ const WA          = "5596991219866";
 const CATALOG_URL = "https://glamour-shoes.vercel.app";
 const SHEET_ID    = "175ba3frE1EriUa3HR_TtezaOLjg4IM0Ssbr4Q7In9OU";
 const PINK        = "#e91e8c";
-const APP_VERSION = "2026-11-18b";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
+const APP_VERSION = "2026-11-25a";  // mude a cada publicação: aparelhos com versão antiga recebem aviso
 // Grade padrão ao cadastrar produto novo (só preenche, dá para ajustar antes de salvar)
 const GRADE_PADRAO={
   Feminino: {"34":1,"35":2,"36":3,"37":3,"38":2,"39":1},
@@ -255,6 +255,7 @@ const S={
   products: normProds(lsGet("gs_prod",DEMO)),
   afiliados: lsGet("gs_afi",[]),
   saques:    lsGet("gs_saq",[]),
+  cred:      lsGet("gs_cred",[]),
   orders:   lsGet("gs_ord",[]),
   crm: dedupeCRM(lsGet("gs_crm",[])),
   cart:[], sel:{},
@@ -351,6 +352,7 @@ async function loadFromSheets(force=false){
       if(data.comissaoPadrao) S.comissaoPadrao=data.comissaoPadrao;
       if(data.cliques) S.cliques=data.cliques;
       if(data.saques){ S.saques=data.saques; lsSet("gs_saq",S.saques); }
+      if(Array.isArray(data.crediario)&&!S._credDirty){ S.cred=data.crediario; lsSet("gs_cred",S.cred); }
       if(force){
         if(data.products&&data.products.length>0){ S.products=normProds(data.products); S._base=baseDe(S.products); lsSet("gs_prod",S.products); }
         if(data.orders  &&data.orders.length>0)  { S.orders=data.orders;     lsSet("gs_ord",S.orders);   }
@@ -421,8 +423,8 @@ async function _post(body){
 }
 function logoutLocal(msg){
   S.token=""; S.unlocked=false; lsSet("gs_token","");
-  S.orders=[]; S.crm=[]; S.afiliados=[]; S.saques=[];
-  ["gs_ord","gs_crm","gs_afi","gs_saq"].forEach(k=>{ try{localStorage.removeItem(k);}catch(e){} });
+  S.orders=[]; S.crm=[]; S.afiliados=[]; S.saques=[]; S.cred=[];
+  ["gs_ord","gs_crm","gs_afi","gs_saq","gs_cred"].forEach(k=>{ try{localStorage.removeItem(k);}catch(e){} });
   if(msg){ toast(msg,4000); if(String(S.view).startsWith("admin")) S.view="adminLogin"; render(); }
 }
 
@@ -1193,7 +1195,7 @@ async function tryLogin(p){
 function buildAdmin(){
   const pending=S.orders.filter(o=>o.status==="pending");
   const TABS=[["orders","📋 Pedidos"],["manual","🧾 Manual"],["crm","👥 CRM"],
-              ["dash","📊 Dashboard"],["stock","📦 Estoque"],["prods","🛍 Produtos"],["share","📣 Compartilhar"],["afi","🤝 Afiliados"],["saq","💸 Saques"],["cfg","⚙️ Config"]];
+              ["dash","📊 Dashboard"],["stock","📦 Estoque"],["prods","🛍 Produtos"],["share","📣 Compartilhar"],["afi","🤝 Afiliados"],["saq","💸 Saques"],["cred","💳 Crediário"],["cfg","⚙️ Config"]];
   return ce("div",{},
     !S.scriptUrl?ce("div",{style:{background:"#fff3cd",borderRadius:"12px",padding:"10px 16px",
       marginBottom:"14px",borderLeft:"4px solid #ffc107",fontSize:"13px",color:"#856404"}},
@@ -1211,6 +1213,11 @@ function buildAdmin(){
           ce("span",{style:{position:"absolute",top:"-4px",right:"-4px",background:"#e53935",color:"#fff",
             borderRadius:"50%",width:"16px",height:"16px",fontSize:"9px",
             display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}},nSaq));
+        const nCred=t==="cred"?credFila().length:0;
+        if(nCred>0) btn.appendChild(
+          ce("span",{style:{position:"absolute",top:"-4px",right:"-4px",background:"#e53935",color:"#fff",
+            borderRadius:"50%",width:"16px",height:"16px",fontSize:"9px",
+            display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}},nCred));
         if(t==="orders"&&pending.length>0) btn.appendChild(
           ce("span",{style:{position:"absolute",top:"-4px",right:"-4px",background:"#ff9800",color:"#fff",
             borderRadius:"50%",width:"16px",height:"16px",fontSize:"9px",
@@ -1227,6 +1234,7 @@ function buildAdmin(){
     S.adminTab==="share" ?buildShare() :
     S.adminTab==="afi"   ?buildAfiliados() :
     S.adminTab==="saq"   ?buildSaques() :
+    S.adminTab==="cred"  ?buildCred()   :
     buildConfig()
   );
 }
@@ -1264,6 +1272,8 @@ function buildOrders(){
                 color:"#2e7d32",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"💳 Pago"):
               (o.pagamento&&o.pagamento.link&&o.status==="pending")?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#f3e5f5",
                 color:"#6a1b9a",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"Aguardando pagamento"):null,
+              credDoPedido(o)?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#fce4ec",
+                color:"#ad1457",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},"💳 A prazo"):null,
               o.ref?ce("span",{style:{marginLeft:"8px",fontSize:"11px",background:"#e0f2f1",
                 color:"#00695c",borderRadius:"10px",padding:"1px 8px",fontWeight:700}},`🤝 ${o.ref}`):null),
             ce("div",{style:{fontSize:"12px",color:"#aaa",marginBottom:"6px"}},o.dateStr),
@@ -1282,6 +1292,12 @@ endBox(o),
             mkEtapaBadge(o),
             ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#25d366",color:"#fff"},
               onclick:()=>openPedidoMsg(o)},"💬 WhatsApp"),
+            o.status!=="cancelled"&&!o.pago&&!isEditing?(()=>{ const cr=credDoPedido(o);
+              return ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#fce4ec",color:"#ad1457"},
+                onclick:()=>{ if(cr){ S.adminTab="cred"; S.credFiltro="todos"; S.credOpen=cr.id; render(); return; }
+                  credNovo({nome:cliName(o),phone:keyOk(phoneKey(o.phone))?o.phone:"",pedido:o.id,total:o.total,
+                    descricao:(o.items||[]).map(i=>`${i.name} nº ${i.size}${(+i.qty||1)>1?` (${i.qty} pares)`:""}`).join(" + ")}); }},
+                cr?"💳 Ver crediário":"💳 Vender a prazo"); })():null,
             !isEditing?botoesEtapa(o):null,
             o.status==="pending"&&!isEditing?ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",justifyContent:"flex-end"}},
               ce("button",{class:"btn",style:{padding:"6px 14px",fontSize:"12px",borderRadius:"20px",background:"#fff3e0",color:"#e65100",border:"1px solid #e65100"},
@@ -2716,6 +2732,538 @@ function buildSaques(){
           q.status==="solicitado"?ce("button",{class:"btn",style:{padding:"6px 12px",fontSize:"12px",background:"#1565c0",color:"#fff"},onclick:()=>mudaSaque(q,"aprovado")},"Aprovar"):null,
           (q.status==="solicitado"||q.status==="aprovado")?ce("button",{class:"btn",style:{padding:"6px 12px",fontSize:"12px",background:"#4caf50",color:"#fff"},onclick:()=>mudaSaque(q,"pago")},"Marcar como pago"):null,
           (q.status==="solicitado"||q.status==="aprovado")?ce("button",{class:"btn",style:{padding:"6px 12px",fontSize:"12px",background:"#ffebee",color:"#c62828"},onclick:()=>mudaSaque(q,"recusado")},"Recusar"):null)))));
+}
+
+// ─── CREDIÁRIO: VENDAS A PRAZO E COBRANÇA ────────────────────────────────────
+// Mesmo padrão do CRM da advocacia: parcelas com vencimento, baixa (total ou parcial),
+// níveis de cobrança pelo atraso, mensagem pronta no WhatsApp e registro de cada contato.
+// Fica na aba "Crediario" da planilha (uma linha por venda; parcelas e contatos em JSON).
+// Encargos padrão de venda ao consumidor: multa de mora de até 2% (CDC, art. 52, §1º)
+// e juros de mora de 1% ao mês, calculados por dia de atraso.
+const CRED_PADRAO={multa:2,juros:1,parcelas:3,per:"mensal"};
+const CRED_MAX_PARC=24;
+const CRED_FORMAS=["Pix","Dinheiro","Cartão","Transferência"];
+const CRED_PER={mensal:"Mensal",quinzenal:"Quinzenal",semanal:"Semanal"};
+const CRED_REPETE=3; // dias até o mesmo cliente voltar para a fila "Cobrar hoje"
+const CRED_NIVEIS=[
+  {n:0,nome:"Lembrete de vencimento",cor:"#1565c0"},
+  {n:1,nome:"Atraso leve (1 a 5 dias)",cor:"#6a1b9a"},
+  {n:2,nome:"Atraso (6 a 15 dias)",cor:"#e65100"},
+  {n:3,nome:"Atraso relevante (16 a 30 dias)",cor:"#d84315"},
+  {n:4,nome:"Inadimplência (31 a 60 dias)",cor:"#c62828"},
+  {n:5,nome:"Aviso final (mais de 60 dias)",cor:"#b71c1c"},
+];
+const CRED_TPL=[
+`Oi, {nome}! Tudo bem? 😊
+
+Passando para lembrar que a parcela {parcela} da sua compra na Glamour❤️Shoes, no valor de {valor}, vence {quando}.
+
+💠 Pix (CPF): {pix}
+Nome: {pixNome}
+
+Depois é só mandar o comprovante aqui. Obrigada! ❤️`,
+`Oi, {nome}! Tudo bem?
+
+Notamos que a parcela abaixo da sua compra na Glamour❤️Shoes ainda está em aberto, talvez tenha passado despercebida 😊
+
+{lista}
+
+💠 Pix (CPF): {pix}
+Nome: {pixNome}
+
+Se já pagou, por favor desconsidere e nos envie o comprovante. Obrigada!`,
+`Olá, {nome}.
+
+Sua compra a prazo na Glamour❤️Shoes está com pagamento em atraso:
+
+{lista}
+
+Total em aberto: {totalVencido}
+
+Pedimos que regularize pelo Pix (CPF) {pix}, em nome de {pixNome}, ou nos diga uma data para o pagamento. Se estiver com alguma dificuldade, fale com a gente que encontramos uma solução.`,
+`Olá, {nome}.
+
+Até agora não identificamos o pagamento das parcelas abaixo da sua compra na Glamour❤️Shoes:
+
+{lista}
+
+Valor atualizado até hoje (multa de {multa}% e juros de {juros}% ao mês): {atualizado}
+
+Pedimos o pagamento ou uma proposta de acordo em até 3 dias úteis.
+Pix (CPF): {pix}, em nome de {pixNome}.`,
+`Prezado(a) {nome},
+
+Registramos que as parcelas abaixo, referentes à sua compra a prazo na Glamour❤️Shoes, estão vencidas há mais de 30 dias:
+
+{lista}
+
+Valor atualizado até hoje: {atualizado} (multa de {multa}% e juros de {juros}% ao mês).
+
+Solicitamos o pagamento ou contato para acordo em até 5 dias úteis. Sem retorno, a loja poderá adotar as medidas de cobrança previstas em lei.
+
+Pix (CPF): {pix}, em nome de {pixNome}.`,
+`Prezado(a) {nome},
+
+Apesar dos nossos contatos anteriores, as parcelas abaixo da sua compra a prazo na Glamour❤️Shoes continuam em aberto:
+
+{lista}
+
+Valor atualizado até hoje: {atualizado}.
+
+Este é o nosso último aviso amigável. Concedemos o prazo final de 5 dias úteis para pagamento ou acordo. Sem regularização, o débito poderá ser cobrado judicialmente e o seu nome poderá ser incluído nos órgãos de proteção ao crédito, após a comunicação prévia exigida por lei.
+
+Continuamos à disposição para negociar. Pix (CPF): {pix}, em nome de {pixNome}.`,
+];
+
+const r2=v=>Math.round((+v||0)*100)/100;
+const dataBR=iso=>{ const m=String(iso||"").match(/^(\d{4})-(\d{2})-(\d{2})/); return m?`${m[3]}/${m[2]}/${m[1]}`:String(iso||""); };
+const credDias=(de,ate)=>Math.round((new Date(ate+"T12:00:00")-new Date(de+"T12:00:00"))/864e5);
+const credPrimeiroNome=c=>String(c.nome||"").trim().split(/\s+/)[0]||"";
+function credSomaData(iso,per,k){
+  const [y,m,d]=String(iso).split("-").map(Number);
+  if(per==="semanal")   return ymdLocal(new Date(y,m-1,d+7*k));
+  if(per==="quinzenal") return ymdLocal(new Date(y,m-1,d+15*k));
+  const ult=new Date(y,m+k,0).getDate();           // mês curto: vence no último dia
+  return ymdLocal(new Date(y,m-1+k,Math.min(d,ult)));
+}
+function credGeraParcelas(valor,n,primeiro,per){
+  const cents=Math.round(valor*100), base=Math.floor(cents/n), resto=cents-base*n;
+  return Array.from({length:n},(_,i)=>({n:i+1,venc:credSomaData(primeiro,per,i),valor:(base+(i===n-1?resto:0))/100,pagamentos:[]}));
+}
+const credPagoPrinc=p=>r2((p.pagamentos||[]).reduce((s,x)=>s+(+x.valor||0),0));
+const credPagoEnc=p=>r2((p.pagamentos||[]).reduce((s,x)=>s+(+x.encargos||0),0));
+// situação de uma parcela hoje: restante, dias de atraso (positivo = vencida) e encargos
+function credParc(c,p,hoje){
+  const rest=r2(Math.max(0,(+p.valor||0)-credPagoPrinc(p)));
+  const quit=rest<0.005;
+  const dias=quit?0:credDias(p.venc,hoje);
+  const enc=!quit&&dias>0?r2(rest*(+c.multa||0)/100+rest*(+c.juros||0)/100*dias/30):0;
+  return {...p,rest,quit,dias,enc,st:quit?"paga":dias>0?"vencida":dias===0?"hoje":"aberta"};
+}
+function credResumo(c){
+  const hoje=toDay();
+  const ps=(c.parcelas||[]).map(p=>credParc(c,p,hoje));
+  const abertas=ps.filter(p=>!p.quit);
+  const venc=abertas.filter(p=>p.st==="vencida");
+  const prox=abertas.filter(p=>p.dias<=0).sort((a,b)=>a.venc.localeCompare(b.venc))[0]||null;
+  const maiorAtraso=venc.reduce((m,p)=>Math.max(m,p.dias),0);
+  const totalVenc=r2(venc.reduce((s,p)=>s+p.rest,0));
+  const enc=r2(venc.reduce((s,p)=>s+p.enc,0));
+  const saldo=r2(abertas.reduce((s,p)=>s+p.rest,0));
+  const recebido=r2((+c.entrada||0)+ps.reduce((s,p)=>s+credPagoPrinc(p)+credPagoEnc(p),0));
+  const status=c.cancelado?"cancelado":!abertas.length?"quitado":venc.length?"atrasado":"em_dia";
+  let nivel=null;
+  if(!c.cancelado){
+    if(venc.length) nivel=maiorAtraso<=5?1:maiorAtraso<=15?2:maiorAtraso<=30?3:maiorAtraso<=60?4:5;
+    else if(prox&&-prox.dias<=3) nivel=0;
+  }
+  const ult=(c.contatos||[]).map(x=>x.data).sort().pop()||"";
+  const cobrarHoje=nivel!==null&&(!ult||credDias(ult,hoje)>=CRED_REPETE);
+  return {ps,abertas,venc,prox,maiorAtraso,totalVenc,enc,saldo,recebido,status,nivel,ult,cobrarHoje,
+          pagas:ps.length-abertas.length,total:ps.length};
+}
+const CRED_ST={em_dia:["Em dia","#e8f5e9","#2e7d32"],atrasado:["Em atraso","#ffebee","#c62828"],
+               quitado:["Quitado","#e3f2fd","#1565c0"],cancelado:["Cancelado","#eeeeee","#616161"]};
+const CRED_PST={paga:["Paga","#e8f5e9","#2e7d32"],vencida:["Vencida","#ffebee","#c62828"],
+                hoje:["Vence hoje","#fff3e0","#e65100"],aberta:["A vencer","#f3e5f5","#6a1b9a"]};
+const credBadge=([l,bg,c])=>ce("span",{class:"badge",style:{background:bg,color:c}},l);
+
+async function persistCred(msg){
+  S._credDirty=true; lsSet("gs_cred",S.cred); render();
+  const d=await _call({action:"saveCrediario",crediario:S.cred});
+  if(d.ok){ S._credDirty=false; S.lastSync=nowStr(); lsSet("gs_lastsync",S.lastSync); if(msg) toast(msg); }
+  else toast(/desconhecida/i.test(d.error||"")
+    ?"⚠️ Salvo só neste aparelho: atualize o Apps Script (Code.gs) e publique uma nova versão."
+    :"⚠️ Salvo só neste aparelho: "+(d.error||"erro na planilha"),6000);
+  render(); return !!d.ok;
+}
+const credAchar=id=>S.cred.find(c=>String(c.id)===String(id));
+const credDoPedido=o=>S.cred.find(c=>!c.cancelado&&c.pedido&&String(c.pedido)===String(o.id));
+function credPendCliente(phone,exceto){
+  return S.cred.filter(c=>String(c.id)!==String(exceto)&&!c.cancelado&&samePhone(c.phone,phone)).map(c=>({c,r:credResumo(c)}));
+}
+
+// ─── mensagens ───────────────────────────────────────────────────────────────
+function credTexto(c,nivel){
+  const r=credResumo(c);
+  const alvo=r.venc.length&&nivel>0?r.venc:(r.prox?[r.prox]:r.venc);
+  const lista=alvo.map(p=>`• Parcela ${p.n}/${r.total}: ${fmt(p.rest)}, venc. ${dataBR(p.venc)}${p.dias>0?` (${p.dias} dia${p.dias!==1?"s":""} de atraso)`:""}`).join("\n");
+  const p0=nivel===0?(r.prox||alvo[0]):alvo[0];
+  const quando=!p0?"":p0.dias===0?"hoje":p0.dias===-1?`amanhã (${dataBR(p0.venc)})`:`em ${dataBR(p0.venc)}`;
+  const V={nome:credPrimeiroNome(c),parcela:p0?`${p0.n}/${r.total}`:"",valor:p0?fmt(p0.rest):"",quando,lista,
+           totalVencido:fmt(r.totalVenc),atualizado:fmt(r.totalVenc+r.enc),multa:String(c.multa||0).replace(".",","),
+           juros:String(c.juros||0).replace(".",","),pix:PIX_CHAVE,pixNome:PIX_NOME};
+  return CRED_TPL[nivel].replace(/\{(\w+)\}/g,(m,k)=>k in V?V[k]:m);
+}
+function credTextoParcelas(c){
+  const r=credResumo(c);
+  return `Olá, ${credPrimeiroNome(c)}! Segue o resumo da sua compra a prazo na Glamour❤️Shoes. 🛍
+
+${c.descricao?c.descricao+"\n":""}Valor da compra: ${fmt(c.total)}${+c.entrada>0?`\nEntrada: ${fmt(c.entrada)}`:""}
+
+${r.ps.map(p=>`${p.quit?"✅":"▫️"} Parcela ${p.n}/${r.total}: ${fmt(p.valor)}, venc. ${dataBR(p.venc)}${p.quit?" (paga)":p.rest<p.valor?` (resta ${fmt(p.rest)})`:""}`).join("\n")}
+
+💠 Pix (CPF): ${PIX_CHAVE}
+Nome: ${PIX_NOME}
+
+Em caso de atraso: multa de ${String(c.multa).replace(".",",")}% e juros de ${String(c.juros).replace(".",",")}% ao mês. Qualquer dúvida, é só chamar aqui! ❤️`;
+}
+function credTextoRecibo(c,p,pg){
+  const r=credResumo(c), pa=r.ps.find(x=>x.n===p.n)||p;
+  const total=r2((+pg.valor||0)+(+pg.encargos||0));
+  const sit=r.status==="quitado"?"🎉 Com este pagamento a sua compra está QUITADA. Muito obrigada!"
+    :`${pa.quit?"":`Pagamento parcial: ainda resta ${fmt(pa.rest)} desta parcela.\n`}Parcelas em aberto: ${r.abertas.length} • Saldo: ${fmt(r.saldo)}${r.prox?`\nPróximo vencimento: ${dataBR(r.prox.venc)} (${fmt(r.prox.rest)})`:""}`;
+  return `Olá, ${credPrimeiroNome(c)}! Confirmamos o recebimento de ${fmt(total)} em ${dataBR(pg.data)} (${pg.forma}), referente à parcela ${p.n}/${r.total} da sua compra na Glamour❤️Shoes. ✅${+pg.encargos>0?`\n(${fmt(pg.valor)} da parcela + ${fmt(pg.encargos)} de multa e juros)`:""}
+
+${sit}
+
+Obrigada pela preferência! ❤️`;
+}
+function credWhats(c,texto,titulo,depois){
+  const k=phoneKey(c.phone);
+  if(!keyOk(k)) return toast("Telefone do cliente inválido ou sem DDD.");
+  const ta=ce("textarea",{class:"inp",style:{width:"100%",resize:"vertical",lineHeight:"1.5",marginBottom:"10px"}});
+  ta.value=texto; ta.rows=12;
+  openModal(ce("div",{},
+    ce("div",{style:{fontWeight:700,fontSize:"15px",marginBottom:"3px"}},titulo),
+    ce("div",{style:{fontSize:"12px",color:"#888",marginBottom:"10px"}},`Para: ${c.nome} (${phoneFmt(c.phone)})`),
+    ta,
+    ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap"}},
+      ce("button",{class:"btn",style:{flex:"1 1 160px",padding:"11px 0",borderRadius:"28px",background:"#25d366",color:"#fff",fontSize:"14px"},
+        onclick:()=>{ window.open(`https://wa.me/55${k}?text=${encodeURIComponent(ta.value)}`,"_blank"); closeModal(); if(depois) depois(); else toast("WhatsApp aberto!"); }},"📲 Enviar no WhatsApp"),
+      ce("button",{class:"btn",style:{padding:"11px 16px",borderRadius:"24px",background:"#eee",color:"#1a1a2e"},
+        onclick:()=>copiaTexto(ta.value,"📋 Texto copiado!")},"Copiar"),
+      ce("button",{class:"btn",style:{padding:"11px 16px",borderRadius:"24px",background:"#eee",color:"#1a1a2e"},onclick:closeModal},"Fechar"))));
+}
+function credCobrar(c,nivelEsc){
+  const r=credResumo(c);
+  const nivel=nivelEsc!=null?nivelEsc:(r.nivel!=null?r.nivel:0);
+  const k=phoneKey(c.phone);
+  if(!keyOk(k)) return toast("Telefone do cliente inválido ou sem DDD.");
+  const ta=ce("textarea",{class:"inp",style:{width:"100%",resize:"vertical",lineHeight:"1.5",marginBottom:"8px"}});
+  ta.value=credTexto(c,nivel); ta.rows=13;
+  const sel=ce("select",{class:"inp",style:{marginBottom:"10px"},onchange:e=>{closeModal();credCobrar(c,+e.target.value);}},
+    ...CRED_NIVEIS.map(x=>{ const o=ce("option",{value:x.n},x.nome+(x.n===r.nivel?" (sugerido)":"")); if(x.n===nivel) o.selected=true; return o; }));
+  const hist=(c.contatos||[]).slice(-4).reverse();
+  openModal(ce("div",{},
+    ce("div",{style:{fontWeight:700,fontSize:"15px",marginBottom:"3px"}},"💬 Cobrança no WhatsApp"),
+    ce("div",{style:{fontSize:"12px",color:"#888",marginBottom:"10px"}},`Para: ${c.nome} (${phoneFmt(c.phone)})`),
+    ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"10px"}},
+      ...[[r.venc.length?fmt(r.totalVenc):fmt(r.prox?r.prox.rest:0),r.venc.length?"em atraso":"próxima parcela","#c62828"],
+          [r.venc.length?`${r.maiorAtraso} dias`:(r.prox?dataBR(r.prox.venc):"-"),r.venc.length?"maior atraso":"vencimento","#1a1a2e"],
+          ...(r.venc.length?[[fmt(r.totalVenc+r.enc),"com multa e juros","#e65100"]]:[])]
+        .map(([v,l,cor])=>ce("div",{style:{flex:"1 1 110px",background:"#faf5f8",borderRadius:"12px",padding:"8px 10px"}},
+          ce("div",{style:{fontWeight:800,fontSize:"15px",color:cor}},v),ce("div",{style:{fontSize:"11px",color:"#888"}},l)))),
+    ce("label",{style:{fontSize:"12px",fontWeight:600,display:"block",marginBottom:"4px"}},"Nível da cobrança"),
+    sel, ta,
+    ce("div",{style:{fontSize:"11px",color:"#888",marginBottom:"10px",lineHeight:"1.4"}},
+      "Revise antes de enviar. Cobre só a própria cliente, em conversa particular, nunca em grupo ou por terceiros, e sem ameaças ou exposição (CDC, art. 42)."),
+    hist.length?ce("div",{style:{fontSize:"11px",color:"#888",marginBottom:"10px"}},"Últimos contatos: ",
+      hist.map(h=>`${dataBR(h.data)} (${(CRED_NIVEIS[h.nivel]||{}).nome||"contato"})`).join(" • ")):null,
+    ce("div",{style:{display:"flex",gap:"8px",flexWrap:"wrap"}},
+      ce("button",{class:"btn",style:{flex:"1 1 160px",padding:"11px 0",borderRadius:"28px",background:"#25d366",color:"#fff",fontSize:"14px"},
+        onclick:()=>{
+          window.open(`https://wa.me/55${k}?text=${encodeURIComponent(ta.value)}`,"_blank"); closeModal();
+          c.contatos=[...(c.contatos||[]),{data:toDay(),hora:nowStr(),nivel,parcelas:(r.venc.length&&nivel>0?r.venc:r.prox?[r.prox]:[]).map(p=>p.n),canal:"WhatsApp"}];
+          persistCred("📲 Cobrança enviada e registrada!");
+        }},"📲 Enviar e registrar"),
+      ce("button",{class:"btn",style:{padding:"11px 16px",borderRadius:"24px",background:"#eee",color:"#1a1a2e"},
+        onclick:()=>copiaTexto(ta.value,"📋 Texto copiado!")},"Copiar"),
+      ce("button",{class:"btn",style:{padding:"11px 16px",borderRadius:"24px",background:"#eee",color:"#1a1a2e"},onclick:closeModal},"Fechar"))));
+}
+
+// ─── nova venda a prazo ──────────────────────────────────────────────────────
+function credNovo(pre){
+  pre=pre||{};
+  const hoje=toDay();
+  const f={nome:pre.nome||"",phone:pre.phone||"",pedido:pre.pedido?String(pre.pedido):"",descricao:pre.descricao||"",
+           total:pre.total||"",entrada:"",entradaForma:"Pix",n:CRED_PADRAO.parcelas,per:CRED_PADRAO.per,
+           primeiro:credSomaData(hoje,"mensal",1),multa:CRED_PADRAO.multa,juros:CRED_PADRAO.juros,obs:""};
+  const lbl=t=>ce("label",{style:{fontWeight:600,fontSize:"12px",display:"block",margin:"10px 0 4px"}},t);
+  const inp=(k,type="text",extra={})=>{ const i=ce("input",{class:"inp",type,...extra}); i.value=f[k]; i.addEventListener("input",()=>{f[k]=i.value;atualiza();}); return i; };
+  const aviso=ce("div",{}), prev=ce("div",{}), selPed=ce("select",{class:"inp"});
+  const nomeInp=inp("nome","text",{placeholder:"Nome da cliente"});
+  const phoneInp=phoneInput(f.phone,v=>{
+    f.phone=v;
+    if(phoneValid(v)){ const c=S.crm.find(x=>samePhone(x.phone,v)); if(c&&String(c.name||"").trim()&&!f.nome.trim()){ f.nome=c.name; nomeInp.value=c.name; } }
+    montaPedidos(); atualiza();
+  });
+  const descInp=ce("textarea",{class:"inp",rows:2,placeholder:"Ex.: Tênis Chunky Branco nº 37 + Sandália Nude nº 36"}); descInp.value=f.descricao;
+  descInp.addEventListener("input",()=>{f.descricao=descInp.value;});
+  const totalInp=inp("total","number",{min:"0",step:"0.01",inputmode:"decimal",placeholder:"0,00"});
+  function montaPedidos(){
+    const ok=phoneValid(f.phone);
+    const peds=ok?S.orders.filter(o=>o.status!=="cancelled"&&samePhone(o.phone,f.phone)&&(!credDoPedido(o)||String(o.id)===f.pedido)):[];
+    selPed.innerHTML="";
+    selPed.appendChild(ce("option",{value:""},ok?(peds.length?"Sem vínculo com pedido":"Nenhum pedido desta cliente"):"Informe o WhatsApp para ver os pedidos"));
+    peds.slice(0,30).forEach(o=>{ const op=ce("option",{value:String(o.id)},`${o.dateStr||o.date} • ${fmt(o.total)} • ${(o.items||[]).length} item(ns)`); if(String(o.id)===f.pedido) op.selected=true; selPed.appendChild(op); });
+  }
+  selPed.addEventListener("change",()=>{
+    f.pedido=selPed.value;
+    const o=S.orders.find(x=>String(x.id)===f.pedido);
+    if(o){ f.total=String(o.total); totalInp.value=f.total;
+      if(!f.nome.trim()){ f.nome=cliName(o); nomeInp.value=f.nome; }
+      f.descricao=(o.items||[]).map(i=>`${i.name} nº ${i.size}${(+i.qty||1)>1?` (${i.qty} pares)`:""}`).join(" + "); descInp.value=f.descricao; }
+    atualiza();
+  });
+  const nSel=ce("select",{class:"inp",onchange:e=>{f.n=+e.target.value;atualiza();}},
+    ...Array.from({length:CRED_MAX_PARC},(_,i)=>{ const o=ce("option",{value:i+1},`${i+1}x`); if(i+1===f.n) o.selected=true; return o; }));
+  const perSel=ce("select",{class:"inp",onchange:e=>{f.per=e.target.value;atualiza();}},
+    ...Object.entries(CRED_PER).map(([v,l])=>{ const o=ce("option",{value:v},l); if(v===f.per) o.selected=true; return o; }));
+  const formaSel=ce("select",{class:"inp",onchange:e=>{f.entradaForma=e.target.value;}},...CRED_FORMAS.map(x=>ce("option",{value:x},x)));
+  const calc=()=>{ const t=r2(String(f.total).replace(",",".")), e=r2(String(f.entrada||0).replace(",",".")); return {t,e,fin:r2(t-e)}; };
+  function atualiza(){
+    const {t,e,fin}=calc();
+    aviso.innerHTML="";
+    if(phoneValid(f.phone)){
+      const pend=credPendCliente(f.phone).filter(x=>x.r.status==="atrasado"||x.r.status==="em_dia");
+      const atr=pend.filter(x=>x.r.status==="atrasado");
+      if(pend.length) aviso.appendChild(ce("div",{style:{background:atr.length?"#ffebee":"#fff8e1",color:atr.length?"#c62828":"#8d6e00",borderRadius:"10px",padding:"8px 12px",fontSize:"12.5px",marginTop:"8px",fontWeight:600}},
+        atr.length?`⚠️ Esta cliente já tem ${fmt(atr.reduce((s,x)=>s+x.r.totalVenc,0))} em atraso (maior atraso: ${Math.max(...atr.map(x=>x.r.maiorAtraso))} dias). Avalie antes de vender a prazo de novo.`
+                  :`ℹ️ Esta cliente já tem ${pend.length} compra(s) a prazo em aberto. Saldo: ${fmt(pend.reduce((s,x)=>s+x.r.saldo,0))}.`));
+    }
+    prev.innerHTML="";
+    if(!(t>0)||fin<=0||!f.primeiro) return;
+    const ps=credGeraParcelas(fin,f.n,f.primeiro,f.per);
+    prev.appendChild(ce("div",{style:{background:"#faf5f8",borderRadius:"12px",padding:"10px 12px",marginTop:"12px",fontSize:"12.5px"}},
+      ce("div",{style:{fontWeight:700,marginBottom:"6px"}},`${f.n}x de ${fmt(ps[0].valor)}${ps[f.n-1].valor!==ps[0].valor?` (última ${fmt(ps[f.n-1].valor)})`:""} • financiado ${fmt(fin)}`),
+      ...ps.slice(0,12).map(p=>ce("div",{style:{display:"flex",justifyContent:"space-between",padding:"2px 0"}},
+        ce("span",{},`Parcela ${p.n}/${f.n} • ${dataBR(p.venc)}`),ce("strong",{},fmt(p.valor)))),
+      f.n>12?ce("div",{style:{color:"#888",marginTop:"4px"}},`+ ${f.n-12} parcelas`):null));
+  }
+  const salvar=async()=>{
+    const {t,e,fin}=calc();
+    if(!f.nome.trim()) return toast("Informe o nome da cliente.");
+    if(!phoneValid(f.phone)) return toast("WhatsApp com DDD é obrigatório na venda a prazo (é por ele que a cobrança é feita).",4500);
+    if(!(t>0)) return toast("Informe o valor da compra.");
+    if(e<0||fin<=0) return toast("A entrada precisa ser menor que o valor da compra.");
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(f.primeiro)) return toast("Informe a data do 1º vencimento.");
+    const m=r2(f.multa), j=r2(f.juros);
+    if(m>2&&!confirm(`Multa de ${m}% passa do limite de 2% do Código de Defesa do Consumidor (art. 52, §1º) para venda ao consumidor final. Manter assim?`)) return;
+    const c={id:String(Date.now()),nome:f.nome.trim(),phone:phoneKey(f.phone),descricao:f.descricao.trim(),pedido:f.pedido,
+             total:t,entrada:e,entradaForma:e>0?f.entradaForma:"",criado:toDay(),multa:m,juros:j,periodicidade:f.per,
+             obs:f.obs.trim(),cancelado:false,parcelas:credGeraParcelas(fin,f.n,f.primeiro,f.per),contatos:[]};
+    S.cred.unshift(c); S.credFiltro="abertos"; S.credOpen=c.id; closeModal();
+    await persistCred("✅ Venda a prazo registrada!");
+    // Pedido vinculado que ainda está aguardando: confirma e baixa o estoque, senão a reserva de 48 h o cancelaria
+    const ped=c.pedido&&S.orders.find(o=>String(o.id)===c.pedido);
+    if(ped&&ped.status==="pending"&&await pedEstoque(ped,"confirmar")) toast("✅ Venda a prazo registrada e pedido confirmado (estoque baixado).",4000);
+    credWhats(c,credTextoParcelas(c),"📄 Enviar as parcelas para a cliente");
+  };
+  montaPedidos();
+  const grid=(...k)=>ce("div",{style:{display:"grid",gridTemplateColumns:`repeat(${k.length},1fr)`,gap:"10px"}},...k);
+  openModal(ce("div",{},
+    ce("div",{style:{fontWeight:800,fontSize:"16px",marginBottom:"4px"}},"💳 Nova venda a prazo"),
+    ce("div",{style:{fontSize:"12px",color:"#888"}},"As parcelas são geradas automaticamente e podem ser ajustadas depois."),
+    grid(ce("div",{},lbl("WhatsApp com DDD *"),phoneInp),ce("div",{},lbl("Nome *"),nomeInp)),
+    aviso,
+    lbl("Vincular a um pedido (opcional)"),selPed,
+    ce("div",{style:{fontSize:"11px",color:"#888",marginTop:"3px"}},"Pedido vinculado que estiver aguardando é confirmado na hora, para a reserva de 48 h não cancelar a venda."),
+    lbl("O que foi vendido"),descInp,
+    grid(ce("div",{},lbl("Valor da compra *"),totalInp),ce("div",{},lbl("Entrada"),inp("entrada","number",{min:"0",step:"0.01",inputmode:"decimal",placeholder:"0,00"})),ce("div",{},lbl("Entrada via"),formaSel)),
+    grid(ce("div",{},lbl("Parcelas"),nSel),ce("div",{},lbl("Frequência"),perSel),ce("div",{},lbl("1º vencimento"),inp("primeiro","date"))),
+    grid(ce("div",{},lbl("Multa por atraso (%)"),inp("multa","number",{min:"0",step:"0.1"})),ce("div",{},lbl("Juros ao mês (%)"),inp("juros","number",{min:"0",step:"0.1"}))),
+    lbl("Observação interna"),inp("obs","text",{placeholder:"Opcional"}),
+    prev,
+    ce("div",{style:{display:"flex",gap:"10px",marginTop:"16px"}},
+      ce("button",{class:"btn",style:{flex:1,padding:"12px 0",borderRadius:"28px",background:PINK,color:"#fff",fontSize:"14px"},onclick:salvar},"✅ Registrar venda a prazo"),
+      ce("button",{class:"btn",style:{padding:"12px 18px",borderRadius:"24px",background:"#eee",color:"#1a1a2e"},onclick:closeModal},"Cancelar"))));
+  atualiza();
+}
+
+// ─── baixa, estorno e ajustes de parcela ─────────────────────────────────────
+function credBaixar(c,n){
+  const p=credParc(c,c.parcelas.find(x=>x.n===n),toDay());
+  if(p.quit) return toast("Esta parcela já está paga.");
+  const g={data:toDay(),forma:"Pix",enc:p.enc>0};
+  const vInp=ce("input",{class:"inp",type:"number",min:"0",step:"0.01",inputmode:"decimal"});
+  const setV=()=>{ vInp.value=r2(p.rest+(g.enc?p.enc:0)).toFixed(2); };
+  setV();
+  const dInp=ce("input",{class:"inp",type:"date"}); dInp.value=g.data; dInp.addEventListener("input",()=>{g.data=dInp.value;});
+  const fSel=ce("select",{class:"inp",onchange:e=>{g.forma=e.target.value;}},...CRED_FORMAS.map(x=>ce("option",{value:x},x)));
+  const N=c.parcelas.length;
+  openModal(ce("div",{},
+    ce("div",{style:{fontWeight:800,fontSize:"16px",marginBottom:"4px"}},`✅ Receber parcela ${p.n}/${N}`),
+    ce("div",{style:{fontSize:"12.5px",color:"#666",marginBottom:"10px"}},
+      `${c.nome} • venc. ${dataBR(p.venc)} • ${p.rest<p.valor?`restante ${fmt(p.rest)} de ${fmt(p.valor)}`:fmt(p.valor)}`,
+      p.dias>0?ce("div",{style:{color:"#c62828",fontWeight:600,marginTop:"4px"}},`${p.dias} dias de atraso • multa e juros: ${fmt(p.enc)}`):null),
+    p.enc>0?ce("label",{style:{display:"flex",gap:"8px",alignItems:"center",fontSize:"13px",marginBottom:"8px",cursor:"pointer"}},
+      ce("input",{type:"checkbox",checked:g.enc,onchange:e=>{g.enc=e.target.checked;setV();}}),`Cobrar multa e juros (${fmt(p.enc)})`):null,
+    ce("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"10px"}},
+      ce("div",{},ce("label",{style:{fontSize:"12px",fontWeight:600}},"Valor recebido"),vInp),
+      ce("div",{},ce("label",{style:{fontSize:"12px",fontWeight:600}},"Data"),dInp),
+      ce("div",{},ce("label",{style:{fontSize:"12px",fontWeight:600}},"Forma"),fSel)),
+    ce("div",{style:{fontSize:"11px",color:"#888",margin:"8px 0 14px"}},"Valor menor que o devido fica como pagamento parcial e a parcela continua em aberto com o restante."),
+    ce("div",{style:{display:"flex",gap:"10px"}},
+      ce("button",{class:"btn",style:{flex:1,padding:"12px 0",borderRadius:"28px",background:"#2e7d32",color:"#fff",fontSize:"14px"},onclick:async()=>{
+        const v=r2(String(vInp.value).replace(",","."));
+        if(!(v>0)) return toast("Informe o valor recebido.");
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(g.data)) return toast("Informe a data do pagamento.");
+        const princ=r2(Math.min(v,p.rest)), enc=r2(Math.max(0,v-p.rest));
+        const pg={data:g.data,valor:princ,encargos:enc,forma:g.forma,em:nowStr()};
+        const orig=c.parcelas.find(x=>x.n===n); orig.pagamentos=[...(orig.pagamentos||[]),pg];
+        closeModal();
+        const r=credResumo(c);
+        await persistCred(r.status==="quitado"?"🎉 Compra quitada!":princ<p.rest?"✅ Pagamento parcial registrado.":"✅ Parcela recebida!");
+        credWhats(c,credTextoRecibo(c,orig,pg),"🧾 Enviar recibo para a cliente");
+      }},"Confirmar recebimento"),
+      ce("button",{class:"btn",style:{padding:"12px 18px",borderRadius:"24px",background:"#eee",color:"#1a1a2e"},onclick:closeModal},"Cancelar"))));
+}
+function credEstornar(c,n){
+  const p=c.parcelas.find(x=>x.n===n), u=(p.pagamentos||[]).slice(-1)[0];
+  if(!u) return;
+  if(!confirm(`Desfazer o último recebimento da parcela ${n} (${fmt((+u.valor||0)+(+u.encargos||0))} em ${dataBR(u.data)})?`)) return;
+  p.pagamentos=p.pagamentos.slice(0,-1);
+  persistCred("↩️ Recebimento desfeito.");
+}
+function credEditarParc(c,n){
+  const p=c.parcelas.find(x=>x.n===n);
+  const dInp=ce("input",{class:"inp",type:"date"}); dInp.value=p.venc;
+  const vInp=ce("input",{class:"inp",type:"number",min:"0",step:"0.01"}); vInp.value=(+p.valor).toFixed(2);
+  const todas=ce("input",{type:"checkbox"});
+  openModal(ce("div",{},
+    ce("div",{style:{fontWeight:800,fontSize:"16px",marginBottom:"10px"}},`✏️ Ajustar parcela ${n}/${c.parcelas.length}`),
+    ce("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px"}},
+      ce("div",{},ce("label",{style:{fontSize:"12px",fontWeight:600}},"Vencimento"),dInp),
+      ce("div",{},ce("label",{style:{fontSize:"12px",fontWeight:600}},"Valor"),vInp)),
+    ce("label",{style:{display:"flex",gap:"8px",alignItems:"center",fontSize:"13px",margin:"10px 0 14px",cursor:"pointer"}},todas,
+      "Empurrar também os vencimentos das parcelas seguintes em aberto (mesma diferença de dias)"),
+    ce("div",{style:{display:"flex",gap:"10px"}},
+      ce("button",{class:"btn",style:{flex:1,padding:"12px 0",borderRadius:"28px",background:PINK,color:"#fff"},onclick:()=>{
+        const nv=dInp.value, vv=r2(vInp.value);
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(nv)||!(vv>0)) return toast("Confira a data e o valor.");
+        if(vv<credPagoPrinc(p)) return toast(`Já foram recebidos ${fmt(credPagoPrinc(p))} desta parcela.`);
+        const desl=credDias(p.venc,nv);
+        if(todas.checked&&desl) c.parcelas.forEach(x=>{ if(x.n>n&&credParc(c,x,toDay()).rest>0){ const [y,m,d]=x.venc.split("-").map(Number); x.venc=ymdLocal(new Date(y,m-1,d+desl)); } });
+        p.venc=nv; p.valor=vv; closeModal(); persistCred("✏️ Parcela ajustada.");
+      }},"Salvar"),
+      ce("button",{class:"btn",style:{padding:"12px 18px",borderRadius:"24px",background:"#eee",color:"#1a1a2e"},onclick:closeModal},"Cancelar"))));
+}
+function credCancelar(c){
+  const r=credResumo(c);
+  const pagos=r.recebido>0;
+  if(!pagos&&confirm(`Excluir a venda a prazo de ${c.nome} (${fmt(c.total)})? Nenhum pagamento foi registrado nela.`)){
+    S.cred=S.cred.filter(x=>x!==c); return persistCred("🗑 Venda a prazo excluída.");
+  }
+  if(pagos&&confirm(`Cancelar a venda a prazo de ${c.nome}? As parcelas em aberto (${fmt(r.saldo)}) deixam de ser cobradas. O que já foi recebido continua registrado.`)){
+    c.cancelado=true; c.canceladoEm=toDay(); persistCred("Venda a prazo cancelada.");
+  }
+}
+function credReativar(c){ c.cancelado=false; delete c.canceladoEm; persistCred("Venda a prazo reativada."); }
+
+// Carnê para imprimir e a cliente assinar (vale como reconhecimento da dívida)
+function credCarne(c){
+  const r=credResumo(c), esc=s=>String(s==null?"":s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+  const w=window.open("","_blank");
+  if(!w) return toast("Libere as janelas pop-up para imprimir o carnê.");
+  const linhas=r.ps.map(p=>`<tr><td>${p.n}/${r.total}</td><td>${dataBR(p.venc)}</td><td>${esc(fmt(p.valor))}</td><td>${p.quit?"Paga em "+dataBR((p.pagamentos||[]).slice(-1)[0].data):p.rest<p.valor?"Resta "+esc(fmt(p.rest)):""}</td><td class="vis"></td></tr>`).join("");
+  w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Carnê ${esc(c.nome)}</title>
+<style>body{font-family:Arial,sans-serif;color:#222;max-width:720px;margin:24px auto;padding:0 16px;font-size:13px}
+h1{font-size:20px;margin:0}h1 span{color:#e91e8c}.sub{color:#666;font-size:12px;margin:2px 0 16px}
+table{width:100%;border-collapse:collapse;margin:12px 0}th,td{border:1px solid #ccc;padding:7px 8px;text-align:left}th{background:#fbeaf3}
+td.vis{width:110px}.box{border:1px solid #ddd;border-radius:8px;padding:10px 12px;margin:10px 0;line-height:1.5}
+.ass{margin-top:46px;display:flex;gap:40px}.ass div{flex:1;border-top:1px solid #333;padding-top:4px;text-align:center;font-size:12px}
+@media print{button{display:none}}</style></head><body>
+<button onclick="print()" style="float:right;padding:8px 16px">🖨 Imprimir</button>
+<h1>Glamour<span>❤️</span>Shoes</h1><div class="sub">${esc(LOJA_END)} • WhatsApp (96) 99121-9866</div>
+<div class="box"><b>Cliente:</b> ${esc(c.nome)} • ${esc(phoneFmt(c.phone))}<br><b>Compra em:</b> ${dataBR(c.criado)} • <b>Valor:</b> ${esc(fmt(c.total))}${+c.entrada>0?` • <b>Entrada:</b> ${esc(fmt(c.entrada))}`:""}<br>${c.descricao?`<b>Produtos:</b> ${esc(c.descricao)}`:""}</div>
+<table><thead><tr><th>Parcela</th><th>Vencimento</th><th>Valor</th><th>Situação</th><th>Visto</th></tr></thead><tbody>${linhas}</tbody></table>
+<div class="box">Pagamento por Pix (CPF) ${esc(PIX_CHAVE)}, em nome de ${esc(PIX_NOME)}, ou na loja. Em caso de atraso incidem multa de ${esc(String(c.multa).replace(".",","))}% e juros de mora de ${esc(String(c.juros).replace(".",","))}% ao mês, proporcionais aos dias de atraso. A cliente declara ter recebido os produtos acima em perfeito estado e reconhece a dívida no valor das parcelas.</div>
+<div class="ass"><div>${esc(c.nome)}</div><div>Glamour Shoes</div></div>
+<p style="font-size:11px;color:#888;margin-top:20px">Macapá/AP, ${dataBR(toDay())}</p></body></html>`);
+  w.document.close();
+}
+
+// ─── aba Crediário ───────────────────────────────────────────────────────────
+function credFila(){ return S.cred.map(c=>({c,r:credResumo(c)})).filter(x=>x.r.cobrarHoje); }
+function buildCred(){
+  if(!S.credFiltro) S.credFiltro=credFila().length?"hoje":"abertos";
+  const hoje=toDay(), mes=hoje.slice(0,7), em7=credSomaData(hoje,"semanal",1);
+  const all=S.cred.map(c=>({c,r:credResumo(c)}));
+  const ativos=all.filter(x=>!x.c.cancelado);
+  const aReceber=r2(ativos.reduce((s,x)=>s+x.r.saldo,0));
+  const atras=ativos.filter(x=>x.r.status==="atrasado");
+  const vencido=r2(atras.reduce((s,x)=>s+x.r.totalVenc,0));
+  const prox7=r2(ativos.reduce((s,x)=>s+x.r.abertas.filter(p=>p.venc>=hoje&&p.venc<=em7).reduce((t,p)=>t+p.rest,0),0));
+  const recMes=r2(all.reduce((s,x)=>s+(String(x.c.criado).startsWith(mes)?(+x.c.entrada||0):0)
+    +(x.c.parcelas||[]).reduce((t,p)=>t+(p.pagamentos||[]).filter(g=>String(g.data).startsWith(mes)).reduce((u,g)=>u+(+g.valor||0)+(+g.encargos||0),0),0),0));
+  const inad=aReceber>0?Math.round(vencido/aReceber*100):0;
+  const FILTROS=[["hoje","🔔 Cobrar hoje",x=>x.r.cobrarHoje],["atrasado","Em atraso",x=>x.r.status==="atrasado"],
+                 ["abertos","Em aberto",x=>x.r.status==="atrasado"||x.r.status==="em_dia"],["quitado","Quitados",x=>x.r.status==="quitado"],
+                 ["cancelado","Cancelados",x=>x.r.status==="cancelado"],["todos","Todos",()=>true]];
+  const fil=FILTROS.find(f=>f[0]===S.credFiltro)||FILTROS[2];
+  const ordena=(a,b)=>(b.r.maiorAtraso-a.r.maiorAtraso)||String((a.r.prox||{}).venc||"9").localeCompare(String((b.r.prox||{}).venc||"9"))||String(b.c.id).localeCompare(String(a.c.id));
+  const listaBox=ce("div",{});
+  const pintaLista=()=>{
+    const q=String(S.credBusca||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").trim(), qd=q.replace(/\D/g,"");
+    const L=all.filter(fil[2]).filter(x=>!q||String(x.c.nome).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").includes(q)||(qd.length>=3&&String(x.c.phone).includes(qd))||String(x.c.descricao||"").toLowerCase().includes(q)).sort(ordena);
+    listaBox.innerHTML="";
+    if(!L.length) listaBox.appendChild(ce("div",{style:{color:"#aaa",textAlign:"center",padding:"30px 0"}},
+      !S.cred.length?"Nenhuma venda a prazo ainda. Toque em ➕ Nova venda a prazo para começar.":S.credFiltro==="hoje"?"🎉 Ninguém para cobrar hoje.":"Nada por aqui."));
+    L.forEach(x=>listaBox.appendChild(credCard(x.c,x.r)));
+  };
+  const busca=ce("input",{class:"inp",type:"search",placeholder:"Buscar por nome, telefone ou produto...",style:{marginBottom:"12px"}});
+  busca.value=S.credBusca||""; busca.addEventListener("input",()=>{S.credBusca=busca.value;pintaLista();});
+  pintaLista();
+  return ce("div",{},
+    ce("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"10px",flexWrap:"wrap",marginBottom:"12px"}},
+      ce("h3",{style:{fontSize:"17px"}},"💳 Crediário: vendas a prazo"),
+      ce("button",{class:"btn",style:{padding:"9px 18px",borderRadius:"22px",background:PINK,color:"#fff",fontSize:"13px"},onclick:()=>credNovo()},"➕ Nova venda a prazo")),
+    S._credDirty?ce("div",{style:{background:"#fff3cd",borderRadius:"10px",padding:"8px 12px",fontSize:"12.5px",color:"#856404",marginBottom:"12px"}},
+      "⚠️ Há alterações do crediário salvas só neste aparelho. ",ce("a",{href:"#",style:{color:"#856404",fontWeight:700},onclick:e=>{e.preventDefault();persistCred("✅ Crediário salvo na planilha!");}},"Tentar salvar de novo")):null,
+    ce("div",{class:"kpi-grid",style:{marginBottom:"16px"}},
+      mkKPI("💰","A receber",fmt(aReceber),"#e3f2fd","#1565c0"),
+      mkKPI("🚨",`Em atraso (${atras.length} cliente${atras.length!==1?"s":""})`,fmt(vencido),"#ffebee","#c62828"),
+      mkKPI("📅","Vence em 7 dias",fmt(prox7),"#fff3e0","#e65100"),
+      mkKPI("✅","Recebido no mês",fmt(recMes),"#e8f5e9","#2e7d32"),
+      mkKPI("📉","Inadimplência",`${inad}%`,"#f3e5f5","#6a1b9a")),
+    ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"12px"}},
+      ...FILTROS.map(([k,l,fn])=>{ const n=all.filter(fn).length; return ce("button",{class:"tab "+(S.credFiltro===k?"on":"off"),onclick:()=>{S.credFiltro=k;render();}},`${l} (${n})`); })),
+    busca, listaBox);
+}
+function credCard(c,r){
+  const aberto=S.credOpen===c.id;
+  const st=CRED_ST[r.status], b=(txt,bg,cor,fn)=>ce("button",{class:"btn",style:{padding:"6px 12px",fontSize:"12px",borderRadius:"18px",background:bg,color:cor},onclick:fn},txt);
+  const nv=r.nivel!=null?CRED_NIVEIS[r.nivel]:null;
+  return ce("div",{class:"card",style:{borderLeft:`4px solid ${st[2]}`}},
+    ce("div",{style:{display:"flex",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",cursor:"pointer"},onclick:()=>{S.credOpen=aberto?null:c.id;render();}},
+      ce("div",{style:{flex:"1 1 220px",minWidth:0}},
+        ce("div",{style:{fontWeight:700,fontSize:"14px"}},c.nome," ",ce("span",{style:{fontSize:"12px",color:"#888",fontWeight:400}},`• ${phoneFmt(c.phone)}`),
+          ce("span",{style:{marginLeft:"8px"}},credBadge(st)),
+          nv&&r.status!=="cancelado"?ce("span",{class:"badge",style:{marginLeft:"6px",background:"#fff",color:nv.cor,border:`1px solid ${nv.cor}`}},nv.nome):null),
+        c.descricao?ce("div",{style:{fontSize:"12.5px",color:"#555",marginTop:"3px"}},c.descricao):null,
+        ce("div",{style:{fontSize:"12px",color:"#888",marginTop:"3px"}},
+          `Compra em ${dataBR(c.criado)} • ${fmt(c.total)}${+c.entrada>0?` (entrada ${fmt(c.entrada)})`:""} • ${r.pagas}/${r.total} pagas${r.ult?` • último contato ${dataBR(r.ult)}`:""}`)),
+      ce("div",{style:{textAlign:"right"}},
+        ce("div",{style:{fontWeight:800,fontSize:"17px",color:r.venc.length?"#c62828":PINK}},fmt(r.venc.length?r.totalVenc:r.saldo)),
+        ce("div",{style:{fontSize:"11px",color:"#888"}},r.venc.length?`em atraso há ${r.maiorAtraso} dia${r.maiorAtraso!==1?"s":""} • saldo ${fmt(r.saldo)}`:
+          r.prox?`saldo • próxima ${dataBR(r.prox.venc)}`:r.status==="quitado"?"quitado":"saldo"),
+        ce("div",{style:{height:"6px",background:"#f1e4ec",borderRadius:"4px",marginTop:"6px",width:"140px",marginLeft:"auto",overflow:"hidden"}},
+          ce("div",{style:{height:"100%",width:`${r.total?Math.round(r.pagas/r.total*100):0}%`,background:"#2e7d32"}})))),
+    ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"10px"}},
+      r.status==="atrasado"||r.status==="em_dia"?b("💬 Cobrar","#25d366","#fff",()=>credCobrar(c)):null,
+      (r.venc.length||r.prox)&&r.status!=="cancelado"?b(`✅ Receber ${r.venc.length?r.venc[0].n:r.prox.n}/${r.total}`,"#2e7d32","#fff",()=>credBaixar(c,(r.venc[0]||r.prox).n)):null,
+      b(aberto?"▲ Fechar":"▼ Parcelas","#f3e5f5","#6a1b9a",()=>{S.credOpen=aberto?null:c.id;render();})),
+    aberto?ce("div",{style:{marginTop:"12px",borderTop:"1px solid #eee",paddingTop:"10px"}},
+      ...r.ps.map(p=>ce("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",flexWrap:"wrap",padding:"7px 0",borderBottom:"1px solid #f3f3f3"}},
+        ce("div",{style:{flex:"1 1 200px",fontSize:"13px"}},
+          ce("strong",{},`${p.n}/${r.total}`),` • ${dataBR(p.venc)} • ${fmt(p.valor)} `,credBadge(CRED_PST[p.st]),
+          p.rest>0&&p.rest<p.valor?ce("div",{style:{fontSize:"11.5px",color:"#e65100"}},`Recebido ${fmt(credPagoPrinc(p))}, resta ${fmt(p.rest)}`):null,
+          p.st==="vencida"?ce("div",{style:{fontSize:"11.5px",color:"#c62828"}},`${p.dias} dias de atraso • atualizado ${fmt(p.rest+p.enc)}`):null,
+          (p.pagamentos||[]).length?ce("div",{style:{fontSize:"11px",color:"#888"}},
+            p.pagamentos.map(g=>`${dataBR(g.data)} ${g.forma} ${fmt((+g.valor||0)+(+g.encargos||0))}`).join(" • ")):null),
+        ce("div",{style:{display:"flex",gap:"5px",flexWrap:"wrap"}},
+          !p.quit&&!c.cancelado?b("✅ Receber","#e8f5e9","#2e7d32",()=>credBaixar(c,p.n)):null,
+          (p.pagamentos||[]).length&&!c.cancelado?b("↩️","#fff3e0","#e65100",()=>credEstornar(c,p.n)):null,
+          !p.quit&&!c.cancelado?b("✏️","#eeeeee","#1a1a2e",()=>credEditarParc(c,p.n)):null))),
+      c.obs?ce("div",{style:{fontSize:"12px",color:"#666",marginTop:"8px"}},`Obs.: ${c.obs}`):null,
+      (c.contatos||[]).length?ce("div",{style:{fontSize:"11.5px",color:"#888",marginTop:"8px"}},
+        `Contatos de cobrança (${c.contatos.length}): `,c.contatos.slice().reverse().map(h=>`${dataBR(h.data)} • ${(CRED_NIVEIS[h.nivel]||{}).nome||"contato"}`).join(" | ")):null,
+      ce("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"10px"}},
+        b("📄 Enviar parcelas","#e3f2fd","#1565c0",()=>credWhats(c,credTextoParcelas(c),"📄 Resumo das parcelas")),
+        b("🖨 Carnê","#e3f2fd","#1565c0",()=>credCarne(c)),
+        c.pedido?b("🧾 Ver pedido","#eeeeee","#1a1a2e",()=>{S.adminTab="orders";S.pedFiltro="todos";render();}):null,
+        c.cancelado?b("Reativar","#eeeeee","#1a1a2e",()=>credReativar(c)):b(r.recebido>0?"Cancelar venda":"🗑 Excluir","#ffebee","#c62828",()=>credCancelar(c)))):null);
 }
 
 // ─── PAINEL DO AFILIADO (/afiliado#chave) ────────────────────────────────────

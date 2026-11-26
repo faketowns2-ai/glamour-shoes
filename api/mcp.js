@@ -12,7 +12,7 @@ const crypto = require("crypto");
 
 const SITE = "https://glamour-shoes.vercel.app";
 const SCRIPT_URL_PADRAO = "https://script.google.com/macros/s/AKfycbw1Pdwu6HC8RzYZplOuhZtYw4kbVcLJPWG35DMElEKiLg4ckebqvRcUHfZMUh_zZu3k/exec";
-const VERSAO = "1.2.0";
+const VERSAO = "1.3.0";
 const GEN = ["Feminino", "Masculino", "Infantil"];
 
 // ─── datas no horário de Brasília ────────────────────────────────────────────
@@ -410,6 +410,40 @@ const TOOLS = [
       const o = a.ordenar || "recentes";
       C = C.slice().sort(o === "mais_pedidos" ? (x, y) => ((+y.orders || 0) + (+y.pending || 0)) - ((+x.orders || 0) + (+x.pending || 0)) : o === "inativos" ? (x, y) => ult(x) - ult(y) : (x, y) => ult(y) - ult(x));
       return { total: C.length, clientes: C.slice(0, a.limite || 50).map(c => ({ nome: c.name, telefone: c.phone, pedidos: (+c.orders || 0) + (+c.pending || 0), ultimo_pedido: c.lastOrder, cliente_desde: c.since })) };
+    }
+  },
+  {
+    name: "cobrancas", title: "Crediário e cobranças", annotations: LEITURA,
+    description: "Vendas a prazo (crediário): parcelas vencidas, a vencer e quitadas, total a receber, inadimplência e quem cobrar hoje (sem contato de cobrança há 3 dias ou mais). A cobrança em si é enviada pelo painel Admin > Crediário, que registra o contato.",
+    inputSchema: { type: "object", properties: {
+      situacao: { type: "string", enum: ["cobrar_hoje", "atrasado", "aberto", "quitado", "todos"], description: "Padrão: aberto." },
+      busca: { type: "string", description: "Nome ou telefone da cliente." } } },
+    async run(a) {
+      const L = (await carrega()).crediario || [], hoje = hojeBR();
+      const dias = (de, ate) => Math.round((Date.parse(ate + "T12:00:00Z") - Date.parse(de + "T12:00:00Z")) / 864e5);
+      const r2 = v => Math.round(v * 100) / 100;
+      let R = L.map(c => {
+        const ps = (c.parcelas || []).map(p => { const rest = r2(Math.max(0, (+p.valor || 0) - (p.pagamentos || []).reduce((s, x) => s + (+x.valor || 0), 0))); const d = rest > 0.004 ? dias(p.venc, hoje) : 0;
+          return { n: p.n, vencimento: p.venc, valor: +p.valor || 0, restante: rest, dias_atraso: d > 0 ? d : 0, encargos: d > 0 ? r2(rest * (+c.multa || 0) / 100 + rest * (+c.juros || 0) / 100 * d / 30) : 0 }; });
+        const ab = ps.filter(p => p.restante > 0.004), venc = ab.filter(p => p.dias_atraso > 0);
+        const prox = ab.filter(p => p.vencimento >= hoje).sort((x, y) => x.vencimento.localeCompare(y.vencimento))[0];
+        const ult = (c.contatos || []).map(x => x.data).sort().pop() || "";
+        const maior = venc.reduce((m, p) => Math.max(m, p.dias_atraso), 0);
+        const status = c.cancelado ? "cancelado" : !ab.length ? "quitado" : venc.length ? "atrasado" : "em_dia";
+        const precisa = status !== "cancelado" && (venc.length || (prox && dias(hoje, prox.vencimento) <= 3));
+        return { cliente: c.nome, telefone: c.phone, compra: c.descricao, data_compra: c.criado, total: c.total, entrada: c.entrada, status,
+                 saldo: r2(ab.reduce((s, p) => s + p.restante, 0)), em_atraso: r2(venc.reduce((s, p) => s + p.restante, 0)),
+                 em_atraso_com_encargos: r2(venc.reduce((s, p) => s + p.restante + p.encargos, 0)), maior_atraso_dias: maior,
+                 proximo_vencimento: prox ? prox.vencimento : null, ultimo_contato: ult || null,
+                 cobrar_hoje: !!precisa && (!ult || dias(ult, hoje) >= 3), parcelas: ps };
+      });
+      if (a.busca) { const b = norm(a.busca), dg = String(a.busca).replace(/\D/g, ""); R = R.filter(x => norm(x.cliente).includes(b) || (dg.length >= 4 && String(x.telefone).includes(dg))); }
+      const sit = a.situacao || "aberto";
+      const F = { cobrar_hoje: x => x.cobrar_hoje, atrasado: x => x.status === "atrasado", aberto: x => x.status === "atrasado" || x.status === "em_dia", quitado: x => x.status === "quitado", todos: () => true }[sit];
+      const ativos = R.filter(x => x.status !== "cancelado");
+      return { hoje, a_receber: r2(ativos.reduce((s, x) => s + x.saldo, 0)), em_atraso: r2(ativos.reduce((s, x) => s + x.em_atraso, 0)),
+               clientes_em_atraso: ativos.filter(x => x.status === "atrasado").length, cobrar_hoje: R.filter(x => x.cobrar_hoje).length,
+               lista: R.filter(F).sort((x, y) => y.maior_atraso_dias - x.maior_atraso_dias) };
     }
   },
   {
