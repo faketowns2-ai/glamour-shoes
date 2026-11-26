@@ -3272,7 +3272,7 @@ async function npGerarPDF(c,cfg){
 }
 // Desenha uma nota (duas por folha A4): canhoto de controle à esquerda e o título à direita.
 function npDesenhaNota(doc,n,cli,cred,cfg,pos){
-  const AZUL=[28,40,72], CINZA=[110,110,118], FUNDO=[244,245,248], LINHA=[175,178,190];
+  const PRETO=[0,0,0], CINZA=[90,90,90], FUNDO=[236,236,236], SOMBRA=[205,205,205], LINHA=[150,150,150];
   const H=134, y0=9+pos*(H+11), xC=10, wC=38, x=xC+wC+5, w=200-x;
   const cor=(c)=>doc.setTextColor(...c), fonte=(st,sz)=>{ doc.setFont("helvetica",st); doc.setFontSize(sz); };
   const cabe=(t,mw,sz,min=6.5)=>{ let s=sz; fonte(doc.getFont().fontStyle,s); while(s>min&&doc.getTextWidth(t)>mw){ s-=0.25; doc.setFontSize(s); } return t; };
@@ -3284,11 +3284,11 @@ function npDesenhaNota(doc,n,cli,cred,cfg,pos){
 
   // ── canhoto (fica com a loja) ──
   doc.setDrawColor(...LINHA); doc.setLineWidth(0.25); doc.roundedRect(xC,y0,wC,H,1.5,1.5);
-  doc.setFillColor(...AZUL); doc.roundedRect(xC,y0,wC,9,1.5,1.5,"F"); doc.rect(xC,y0+5,wC,4,"F");
-  fonte("bold",7.5); cor([255,255,255]); doc.text("CANHOTO",xC+wC/2,y0+5.8,{align:"center"});
+  doc.setFillColor(...SOMBRA); doc.roundedRect(xC,y0,wC,9,1.5,1.5,"F"); doc.rect(xC,y0+5,wC,4,"F"); doc.setDrawColor(...LINHA); doc.roundedRect(xC,y0,wC,H,1.5,1.5);
+  fonte("bold",7.5); cor(PRETO); doc.text("CANHOTO",xC+wC/2,y0+5.8,{align:"center"});
   let cy=y0+15;
   const item=(rot,val,sz=9.5)=>{ fonte("normal",6); cor(CINZA); doc.text(rot.toUpperCase(),xC+3,cy); cy+=4.2;
-    fonte("bold",sz); cor([20,20,28]); const L=doc.splitTextToSize(String(val||"-"),wC-6).slice(0,3); doc.text(L,xC+3,cy); cy+=L.length*sz*0.3528*1.15+3.2; };
+    fonte("bold",sz); cor(PRETO); const L=doc.splitTextToSize(String(val||"-"),wC-6).slice(0,3); doc.text(L,xC+3,cy); cy+=L.length*sz*0.3528*1.15+3.2; };
   item("Nota nº",n.num); item("Vencimento",dataBR(n.venc)); item("Valor",fmt(n.valor),10.5);
   item("Emitente",String(cli.nome).toUpperCase(),7.5); item("CPF",cpfFmt(cli.cpf),8); item("Emissão",dataBR(cfg.emissao),8);
   fonte("normal",6); cor(CINZA);
@@ -3299,25 +3299,25 @@ function npDesenhaNota(doc,n,cli,cred,cfg,pos){
   doc.setLineDashPattern([1,1.2],0); doc.line(xC+wC+2.5,y0,xC+wC+2.5,y0+H); doc.setLineDashPattern([],0);
 
   // ── a nota ──
-  doc.setDrawColor(...AZUL); doc.setLineWidth(0.7); doc.roundedRect(x,y0,w,H,2,2);
+  doc.setDrawColor(...PRETO); doc.setLineWidth(0.7); doc.roundedRect(x,y0,w,H,2,2);
   doc.setLineWidth(0.2); doc.roundedRect(x+1.6,y0+1.6,w-3.2,H-3.2,1.4,1.4);
   // faixa do cabeçalho com padrão discreto
-  doc.setFillColor(...FUNDO); doc.rect(x+1.6,y0+1.6,w-3.2,22,"F");
-  doc.setDrawColor(226,229,236); doc.setLineWidth(0.15);
+  doc.setFillColor(228,228,228); doc.rect(x+1.6,y0+1.6,w-3.2,22,"F");
+  doc.setDrawColor(210,210,210); doc.setLineWidth(0.15);
   for(let k=-22;k<w;k+=2.2) doc.line(Math.max(x+1.6,x+1.6+k),y0+1.6+(k<0?-k:0),Math.min(x+w-1.6,x+1.6+k+22),y0+1.6+Math.min(22,x+w-1.6-(x+1.6+k)));
-  doc.setDrawColor(...AZUL); doc.setLineWidth(0.4); doc.line(x+1.6,y0+23.6,x+w-1.6,y0+23.6);
-  fonte("bold",15); cor(AZUL); doc.text("NOTA PROMISSÓRIA",x+6,y0+12.5);
-  fonte("bold",9); cor(AZUL); doc.text(`Nº ${n.num}`,x+6,y0+19); fonte("normal",8); cor(CINZA); doc.text("•   Única via",x+6+doc.getTextWidth(`Nº ${n.num}`)*9/8+3,y0+19);
+  doc.setDrawColor(...PRETO); doc.setLineWidth(0.4); doc.line(x+1.6,y0+23.6,x+w-1.6,y0+23.6);
+  fonte("bold",15); cor(PRETO); doc.text("NOTA PROMISSÓRIA",x+6,y0+12.5);
+  fonte("bold",9); cor(PRETO); doc.text(`Nº ${n.num}`,x+6,y0+19); fonte("normal",8); cor(CINZA); doc.text("•   Única via",x+6+doc.getTextWidth(`Nº ${n.num}`)*9/8+3,y0+19);
   // quadros vencimento e valor
-  const caixa=(bx,bw,rot,val,sz)=>{ doc.setFillColor(255,255,255); doc.setDrawColor(...AZUL); doc.setLineWidth(0.35); doc.roundedRect(bx,y0+5,bw,15,1.2,1.2,"FD");
+  const caixa=(bx,bw,rot,val,sz)=>{ doc.setFillColor(...FUNDO); doc.setDrawColor(...PRETO); doc.setLineWidth(0.35); doc.roundedRect(bx,y0+5,bw,15,1.2,1.2,"FD");
     fonte("bold",6); cor(CINZA); doc.text(rot,bx+bw/2,y0+9,{align:"center"});
-    fonte("bold",sz); cor(AZUL); cabe(val,bw-4,sz); doc.text(val,bx+bw/2,y0+16.3,{align:"center"}); };
+    fonte("bold",sz); cor(PRETO); cabe(val,bw-4,sz); doc.text(val,bx+bw/2,y0+16.3,{align:"center"}); };
   caixa(x+w-75,31,"VENCIMENTO",dataBR(n.venc),11.5);
   caixa(x+w-41,36,"VALOR",fmt(n.valor),12.5);
 
   // texto da promessa
   let ty=y0+31;
-  fonte("normal",10); cor([25,25,32]);
+  fonte("normal",10); cor(PRETO);
   const promessa=`No dia ${dataExt(n.venc)}, pagarei por esta única via de NOTA PROMISSÓRIA a ${String(cred.nome).toUpperCase()}, inscrito(a) no ${docCred} sob o nº ${cred.doc}, ou à sua ordem, a quantia de ${fmt(n.valor)} (${extenso(n.valor)}), em moeda corrente nacional, pagável em ${cfg.praca}.`;
   const L=doc.splitTextToSize(promessa,w-12);
   doc.text(L,x+6,ty,{lineHeightFactor:1.45,maxWidth:w-12,align:"justify"});
@@ -3325,12 +3325,12 @@ function npDesenhaNota(doc,n,cli,cred,cfg,pos){
 
   // quadro do emitente
   const gx=x+6, gw=w-12;
-  doc.setFillColor(...AZUL); doc.rect(gx,ty,gw,5,"F");
-  fonte("bold",7); cor([255,255,255]); doc.text("EMITENTE (DEVEDOR)",gx+2.5,ty+3.5);
+  doc.setFillColor(...SOMBRA); doc.setDrawColor(...LINHA); doc.setLineWidth(0.2); doc.rect(gx,ty,gw,5,"FD");
+  fonte("bold",7); cor(PRETO); doc.text("EMITENTE (DEVEDOR)",gx+2.5,ty+3.5);
   ty+=5;
   const cel=(cx,cw,rot,val,h=9.5,linhas=1)=>{ doc.setDrawColor(...LINHA); doc.setLineWidth(0.2); doc.rect(cx,ty,cw,h);
     fonte("normal",5.8); cor(CINZA); doc.text(rot.toUpperCase(),cx+1.8,ty+3);
-    fonte("bold",8.8); cor([20,20,28]); const v=String(val||"-");
+    fonte("bold",8.8); cor(PRETO); const v=String(val||"-");
     if(linhas>1){ let sz=8.8, LL; do{ doc.setFontSize(sz); LL=doc.splitTextToSize(v,cw-3.6); sz-=0.25; }while(LL.length>linhas&&sz>6.5); doc.text(LL.slice(0,linhas),cx+1.8,ty+6.8,{lineHeightFactor:1.15}); }
     else { cabe(v,cw-3.6,8.8); doc.text(v,cx+1.8,ty+7.2); } };
   cel(gx,gw*0.68,"Nome completo",String(cli.nome).toUpperCase()); cel(gx+gw*0.68,gw*0.32,"CPF",cpfFmt(cli.cpf)); ty+=9.5;
@@ -3342,11 +3342,11 @@ function npDesenhaNota(doc,n,cli,cred,cfg,pos){
   cel(gx+2*q,q,"Estado civil",ec); cel(gx+3*q,q,"Profissão",cli.profissao); ty+=9.5;
 
   // local e data + assinatura
-  fonte("normal",9.5); cor([25,25,32]);
+  fonte("normal",9.5); cor(PRETO);
   doc.text(`Local e data da emissão: ${cfg.praca}, ${dataExt(cfg.emissao)}.`,x+6,ty+7);
   const ay=y0+H-17, ax=x+w/2+14;
   doc.setDrawColor(30,30,40); doc.setLineWidth(0.3); doc.line(ax-46,ay,ax+46,ay);
-  fonte("bold",8.3); cor([20,20,28]); const nomeAss=String(cli.nome).toUpperCase(); cabe(nomeAss,92,8.3); doc.text(nomeAss,ax,ay+4,{align:"center"});
+  fonte("bold",8.3); cor(PRETO); const nomeAss=String(cli.nome).toUpperCase(); cabe(nomeAss,92,8.3); doc.text(nomeAss,ax,ay+4,{align:"center"});
   fonte("normal",7.3); cor(CINZA); doc.text(`CPF ${cpfFmt(cli.cpf)}  •  Assinatura do emitente`,ax,ay+7.8,{align:"center"});
   fonte("normal",5.8); cor(CINZA);
   doc.text("Título de crédito regido pelo Decreto nº 57.663/1966 (Lei Uniforme de Genebra).",x+w/2,y0+H-3.6,{align:"center"});
