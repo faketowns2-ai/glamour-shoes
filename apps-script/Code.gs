@@ -15,7 +15,7 @@ const H_AFI  = ["codigo","nome","whatsapp","pix","comissao","ativo","criado","ch
 const H_CLQ  = ["codigo","data","cliques"];
 const H_SAQ  = ["id","codigo","nome","valor","pix","status","solicitadoEm","atualizadoEm","pedidos","obs"];
 // Crediário (vendas a prazo): uma linha por venda; parcelas e contatos de cobrança em JSON
-const H_CRED = ["id","nome","phone","descricao","pedido","total","entrada","entradaForma","criado","multa","juros","periodicidade","status","cancelado","canceladoEm","obs","parcelas","contatos"];
+const H_CRED = ["id","nome","phone","descricao","pedido","total","entrada","entradaForma","criado","multa","juros","periodicidade","status","cancelado","canceladoEm","obs","parcelas","contatos","cliente","avalista","promissorias"];
 const DIAS_LIBERACAO = 1;   // comissão fica disponível para saque 1 dia depois da venda
 const SAQUE_MINIMO   = 10;  // R$
 const COMISSAO_PADRAO = 20; // % de quem se cadastra pelo link público (o Admin pode mudar em Afiliados)
@@ -904,7 +904,8 @@ function loadCrediario_(ss) {
              entradaForma: String(o.entradaforma || ""), criado: dataISO_(o.criado), multa: Number(o.multa || 0),
              juros: Number(o.juros || 0), periodicidade: String(o.periodicidade || "mensal"), cancelado: bool_(o.cancelado),
              canceladoEm: o.canceladoem ? dataISO_(o.canceladoem) : "", obs: String(o.obs || ""),
-             parcelas: parseJ_(o.parcelas, []), contatos: parseJ_(o.contatos, []) };
+             parcelas: parseJ_(o.parcelas, []), contatos: parseJ_(o.contatos, []),
+             cliente: parseJ_(o.cliente, null), avalista: parseJ_(o.avalista, null), promissorias: parseJ_(o.promissorias, []) };
   });
 }
 function statusCred_(c) {
@@ -917,5 +918,6 @@ function saveCrediario_(ss, lista) {
   writeAll_(ss, "Crediario", H_CRED, lista.map(c => [String(c.id), c.nome || "", "'" + String(c.phone || ""), c.descricao || "", String(c.pedido || ""),
     Number(c.total) || 0, Number(c.entrada) || 0, c.entradaForma || "", c.criado || "", Number(c.multa) || 0, Number(c.juros) || 0,
     c.periodicidade || "mensal", statusCred_(c), !!c.cancelado, c.canceladoEm || "", c.obs || "",
-    JSON.stringify(c.parcelas || []), JSON.stringify(c.contatos || [])]));
+    JSON.stringify(c.parcelas || []), JSON.stringify(c.contatos || []),
+    c.cliente ? JSON.stringify(c.cliente) : "", c.avalista ? JSON.stringify(c.avalista) : "", JSON.stringify(c.promissorias || [])]));
 }
